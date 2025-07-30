@@ -3,75 +3,67 @@
 {% block title %}채팅 - BigQuery AI Assistant{% endblock %}
 
 {% block content %}
-<div class="w-full h-full flex flex-col bg-gradient-to-br from-slate-50 to-blue-50">
-    <!-- 상단 헤더 -->
-    <header class="px-6 py-4 border-b border-gray-200/80 bg-white/80 backdrop-blur-sm flex justify-between items-center flex-shrink-0">
-        <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                </svg>
-            </div>
+<div class="main-content">
+    <!-- Chat Header -->
+    <header class="chat-header">
+        <div class="chat-header-info">
+            <div class="chat-avatar">AI</div>
             <div>
-                <h2 class="text-lg font-semibold text-gray-900">분석 채팅</h2>
-                <p class="text-xs text-gray-500">BigQuery 데이터를 자연어로 분석하세요</p>
+                <h2 class="chat-title">분석 채팅</h2>
+                <p class="chat-subtitle">BigQuery 데이터를 자연어로 분석하세요</p>
             </div>
         </div>
         
-        <div class="flex items-center gap-4">
-            <div id="profilingStatusWrapper" class="flex items-center text-sm text-gray-600">
-                <span class="status-indicator status-inactive" id="profiling-status-indicator"></span>
+        <div class="chat-actions">
+            <div class="status-indicator">
+                <div class="status-dot" id="profiling-status-dot"></div>
                 <span id="profilingStatus">대기 중</span>
             </div>
-            <button id="startProfilingButton" class="btn btn-primary disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2-2V7a2 2 0 012-2h2a2 2 0 002 2v6a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 00-2 2h-2a2 2 0 00-2 2v6a2 2 0 01-2 2H9z" />
+            <button id="startProfilingButton" class="btn btn-primary" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2-2V7a2 2 0 012-2h2a2 2 0 002 2v6a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 00-2 2h-2a2 2 0 00-2 2v6a2 2 0 01-2 2H9z" />
                 </svg>
-                프로파일링 시작
+                <span>프로파일링 시작</span>
             </button>
         </div>
     </header>
 
-    <!-- 메시지 영역 -->
-    <div class="messages-area flex-1 overflow-y-auto" id="messagesArea">
-        <div id="messagesContainer" class="py-6 px-4">
-            <!-- 메시지 표시 영역 -->
+    <!-- Messages Area -->
+    <div class="messages-area" id="messagesArea">
+        <div class="messages-container" id="messagesContainer">
+            <!-- Messages will be displayed here -->
         </div>
     </div>
 
-    <!-- 입력 영역 -->
-    <div class="px-6 py-4 bg-white/80 backdrop-blur-sm border-t border-gray-200/80 flex-shrink-0">
-        <div class="max-w-4xl mx-auto">
-            <div class="input-container">
-                <div class="flex items-end gap-3">
-                    <textarea 
-                        id="chatInput" 
-                        class="input-textarea flex-1" 
-                        placeholder="데이터에 대해 질문해보세요... (Shift+Enter로 줄바꿈)"
-                        rows="1" 
-                        disabled
-                    ></textarea>
-                    <button id="sendButton" class="send-button" disabled>
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                        </svg>
-                    </button>
-                </div>
+    <!-- Input Area -->
+    <div class="input-area">
+        <div class="input-container">
+            <div class="input-wrapper">
+                <textarea 
+                    id="chatInput" 
+                    class="input-textarea" 
+                    placeholder="데이터에 대해 질문해보세요... (Shift+Enter로 줄바꿈)"
+                    rows="1" 
+                    disabled
+                ></textarea>
+                <button id="sendButton" class="send-button" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
+                    </svg>
+                </button>
             </div>
             
-            <!-- 빠른 질문 제안 (웰컴 상태일 때만 표시) -->
-            <div id="quickSuggestions" class="mt-3 hidden">
-                <div class="flex flex-wrap gap-2 justify-center">
-                    <button class="analysis-button" onclick="insertQuickQuestion('테이블 구조를 보여줘')">
-                        📊 테이블 구조 보기
-                    </button>
-                    <button class="analysis-button" onclick="insertQuickQuestion('데이터 요약 통계를 알려줘')">
-                        📈 데이터 요약
-                    </button>
-                    <button class="analysis-button" onclick="insertQuickQuestion('상위 10개 레코드를 보여줘')">
-                        🔍 데이터 미리보기
-                    </button>
-                </div>
+            <!-- Quick Suggestions -->
+            <div id="quickSuggestions" class="quick-suggestions hidden">
+                <button class="suggestion-button" onclick="insertQuickQuestion('테이블 구조를 보여줘')">
+                    📊 테이블 구조 보기
+                </button>
+                <button class="suggestion-button" onclick="insertQuickQuestion('데이터 요약 통계를 알려줘')">
+                    📈 데이터 요약
+                </button>
+                <button class="suggestion-button" onclick="insertQuickQuestion('상위 10개 레코드를 보여줘')">
+                    🔍 데이터 미리보기
+                </button>
             </div>
         </div>
     </div>
@@ -86,6 +78,7 @@
     const elements = {
         startProfilingButton: document.getElementById('startProfilingButton'),
         profilingStatus: document.getElementById('profilingStatus'),
+        profilingStatusDot: document.getElementById('profiling-status-dot'),
         messagesContainer: document.getElementById('messagesContainer'),
         chatInput: document.getElementById('chatInput'),
         sendButton: document.getElementById('sendButton'),
@@ -116,12 +109,16 @@
             elements.startProfilingButton.disabled = false;
             elements.chatInput.disabled = false;
             elements.sendButton.disabled = false;
+            elements.profilingStatusDot.classList.add('active');
+            elements.profilingStatus.textContent = '준비됨';
             if (isFirstMessage) showWelcomeMessage();
         } else {
             currentSettings = { projectId: null, tableIds: [] };
             elements.startProfilingButton.disabled = true;
             elements.chatInput.disabled = true;
             elements.sendButton.disabled = true;
+            elements.profilingStatusDot.classList.remove('active');
+            elements.profilingStatus.textContent = '설정 필요';
             showSettingsNeededMessage();
         }
     }
@@ -130,8 +127,8 @@
         elements.messagesContainer.innerHTML = `
             <div class="welcome-container">
                 <div class="welcome-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                     </svg>
                 </div>
                 <h2 class="welcome-title">무엇을 도와드릴까요?</h2>
@@ -147,14 +144,14 @@
         elements.messagesContainer.innerHTML = `
             <div class="welcome-container">
                 <div class="welcome-icon" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                 </div>
                 <h2 class="welcome-title">설정이 필요합니다</h2>
                 <p class="welcome-subtitle">
-                    좌측 메뉴의 <a href="/settings" class="text-blue-600 font-semibold hover:underline">프로젝트 설정</a>으로 이동하여<br>
+                    좌측 메뉴의 <a href="/settings" class="text-orange-600 font-semibold hover:underline">프로젝트 설정</a>으로 이동하여<br>
                     분석할 BigQuery 프로젝트와 테이블을 먼저 선택해주세요.
                 </p>
             </div>`;
@@ -175,53 +172,57 @@
         }
         
         const messageWrapper = document.createElement('div');
-        messageWrapper.className = `message-bubble flex items-start gap-3 mb-6 ${isUser ? 'flex-row-reverse justify-start' : 'justify-start'}`;
+        messageWrapper.className = 'message-bubble';
         
-        // 아바타
+        const messageContainer = document.createElement('div');
+        messageContainer.className = `message-wrapper ${isUser ? 'user' : ''}`;
+        
+        // Avatar
         const avatar = document.createElement('div');
-        avatar.className = `message-avatar ${isUser ? 'user-avatar' : 'assistant-avatar'}`;
-        avatar.innerHTML = isUser ? 'U' : 'AI';
+        avatar.className = `message-avatar ${isUser ? 'user' : 'assistant'}`;
+        avatar.textContent = isUser ? 'U' : 'AI';
         
-        // 메시지 컨테이너
+        // Content
         const contentContainer = document.createElement('div');
-        contentContainer.className = 'flex-1 min-w-0';
+        contentContainer.className = 'message-content';
         
         const messageDiv = document.createElement('div');
         
         if (type === 'loading') {
-            messageDiv.className = 'assistant-message flex items-center gap-3';
+            messageDiv.className = 'message-text loading';
             messageDiv.innerHTML = `
-                <span class="text-gray-600">분석 중</span>
+                <span>분석 중</span>
                 <div class="loading-dots">
                     <div class="loading-dot"></div>
                     <div class="loading-dot"></div>
                     <div class="loading-dot"></div>
                 </div>`;
         } else {
-            messageDiv.className = isUser ? 'user-message ml-auto' : 'assistant-message';
+            messageDiv.className = `message-text ${isUser ? 'user' : 'assistant'}`;
             
             if (type === 'markdown') {
                 messageDiv.innerHTML = marked.parse(content, { gfm: true, breaks: true });
             } else if (type === 'data_result') {
                 messageDiv.innerHTML = formatDataResult(content);
             } else {
-                messageDiv.innerHTML = `<p class="mb-0">${content}</p>`;
+                messageDiv.textContent = content;
             }
         }
         
         contentContainer.appendChild(messageDiv);
 
-        // 분석 메뉴 추가 (데이터 결과인 경우)
+        // Analysis menu for data results
         if (!isUser && type === 'data_result' && context) {
             const menu = createAnalysisMenu(context);
             contentContainer.appendChild(menu);
         }
 
-        messageWrapper.appendChild(avatar);
-        messageWrapper.appendChild(contentContainer);
+        messageContainer.appendChild(avatar);
+        messageContainer.appendChild(contentContainer);
+        messageWrapper.appendChild(messageContainer);
         elements.messagesContainer.appendChild(messageWrapper);
         
-        // 스크롤을 맨 아래로
+        // Scroll to bottom
         const messagesArea = document.getElementById('messagesArea');
         messagesArea.scrollTop = messagesArea.scrollHeight;
         
@@ -234,14 +235,14 @@
 
     function createAnalysisMenu(context) {
         const menuContainer = document.createElement('div');
-        menuContainer.className = 'analysis-menu mt-4';
+        menuContainer.className = 'analysis-menu';
         
         const menuTitle = document.createElement('div');
-        menuTitle.className = 'text-sm font-medium text-gray-700 mb-3';
-        menuTitle.innerHTML = '🔍 추가 분석';
+        menuTitle.className = 'analysis-menu-title';
+        menuTitle.textContent = '🔍 추가 분석';
         
         const buttonsContainer = document.createElement('div');
-        buttonsContainer.className = 'flex flex-wrap gap-2';
+        buttonsContainer.className = 'analysis-buttons';
         
         const menuItems = [
             { text: '📊 결과 데이터 해설', type: 'explanation' },
@@ -252,7 +253,7 @@
         menuItems.forEach(item => {
             const button = document.createElement('button');
             button.className = 'analysis-button';
-            button.innerHTML = item.text;
+            button.textContent = item.text;
             button.onclick = () => handleAnalysisRequest(item.type, context, menuContainer);
             buttonsContainer.appendChild(button);
         });
@@ -263,7 +264,7 @@
     }
 
     async function handleAnalysisRequest(analysisType, context, menuContainer) {
-        // 버튼 비활성화
+        // Disable buttons
         const buttons = menuContainer.querySelectorAll('.analysis-button');
         buttons.forEach(btn => btn.disabled = true);
         
@@ -287,7 +288,6 @@
             addMessage(`**분석 오류:**\n${error.message}`, false, 'markdown');
         } finally {
             loadingMessage.remove();
-            // 버튼 다시 활성화
             buttons.forEach(btn => btn.disabled = false);
         }
     }
@@ -296,10 +296,10 @@
         const question = elements.chatInput.value.trim();
         if (!question) return;
         
-        // 사용자 메시지 추가
+        // Add user message
         addMessage(question, true, 'text');
         
-        // 입력 필드 초기화 및 비활성화
+        // Reset input
         elements.chatInput.value = '';
         autoResizeTextarea();
         elements.chatInput.disabled = true;
@@ -324,7 +324,7 @@
                 throw new Error(result.error);
             }
 
-            // 결과 포맷팅
+            // Format result
             let dataContent = `### 💾 생성된 SQL\n\`\`\`sql\n${result.generated_sql}\n\`\`\`\n\n### 📊 결과 (${result.row_count}개 행)\n`;
             
             if (result.data && result.data.length > 0) {
@@ -373,23 +373,22 @@
         textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
     }
 
-    // 이벤트 리스너 설정
+    // Event listeners
     document.addEventListener('DOMContentLoaded', function() {
         checkContextAndSetUIState();
         
-        // 프로파일링 버튼
+        // Profiling button
         elements.startProfilingButton.addEventListener('click', () => {
-            // 프로파일링 로직은 필요시 여기에 추가
-            console.log('프로파일링 시작');
+            window.location.href = '/profiling-history';
         });
         
-        // 컨텍스트 변경 감지
+        // Context change detection
         window.addEventListener('contextChanged', checkContextAndSetUIState);
         
-        // 전송 버튼
+        // Send button
         elements.sendButton.addEventListener('click', sendMessage);
         
-        // 텍스트 영역 이벤트
+        // Textarea events
         elements.chatInput.addEventListener('keydown', (event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
@@ -399,7 +398,7 @@
         
         elements.chatInput.addEventListener('input', autoResizeTextarea);
         
-        // 초기 텍스트 영역 크기 설정
+        // Initial textarea size
         autoResizeTextarea();
     });
 </script>
