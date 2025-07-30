@@ -486,10 +486,20 @@ def index():
     """메인 페이지"""
     return render_template('index.html')
 
+@app.route('/settings')
+def settings_page():
+    """설정 페이지"""
+    return render_template('settings.html')
+
 @app.route('/<path:filename>')
 def static_files(filename):
     """정적 파일 서빙"""
     return send_from_directory('.', filename)
+
+@app.route('/profiling-history')
+def profiling_history_page():
+    """프로파일링 기록 페이지"""
+    return render_template('profiling.html')
 
 @app.route('/profiling')
 def run_profiling():

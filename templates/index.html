@@ -1,869 +1,189 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BigQuery AI Assistant</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
-    <style>
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            overflow: hidden;
-        }
-        .sidebar {
-            width: 320px;
-            min-width: 320px;
-            max-width: 320px;
-        }
-        .chat-container {
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-        .messages-area {
-            flex: 1;
-            overflow-y: auto;
-            padding: 20px;
-        }
-        .input-area {
-            border-top: 1px solid #e5e7eb;
-            padding: 20px;
-            background: white;
-        }
-        .message-bubble {
-            max-width: 80%;
-            margin-bottom: 16px;
-            word-wrap: break-word;
-        }
-        .user-message {
-            margin-left: auto;
-            background: #f3f4f6;
-            border-radius: 18px 18px 4px 18px;
-        }
-        .ai-message {
-            margin-right: auto;
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 18px 18px 18px 4px;
-        }
-        .sidebar-section {
-            border-bottom: 1px solid #e5e7eb;
-        }
-        .sidebar-section:last-child {
-            border-bottom: none;
-        }
-        .section-header {
-            padding: 16px 20px;
-            font-weight: 600;
-            color: #374151;
-            cursor: pointer;
-            user-select: none;
-        }
-        .section-header:hover {
-            background: #f9fafb;
-        }
-        .section-content {
-            padding: 0 20px 20px 20px;
-            display: none;
-        }
-        .section-content.active {
-            display: block;
-        }
-        .input-wrapper {
-            position: relative;
-            display: flex;
-            align-items: flex-end;
-            gap: 12px;
-        }
-        .chat-input {
-            flex: 1;
-            border: 1px solid #d1d5db;
-            border-radius: 24px;
-            padding: 12px 20px;
-            resize: none;
-            font-size: 16px;
-            line-height: 1.5;
-            max-height: 120px;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-        .chat-input:focus {
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
-        .send-button {
-            background: #3b82f6;
-            color: white;
-            border: none;
-            border-radius: 20px;
-            padding: 10px 16px;
-            cursor: pointer;
-            transition: background-color 0.2s;
-            flex-shrink: 0;
-        }
-        .send-button:hover {
-            background: #2563eb;
-        }
-        .send-button:disabled {
-            background: #9ca3af;
-            cursor: not-allowed;
-        }
-        .status-indicator {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 8px;
-        }
-        .status-ready { background: #10b981; }
-        .status-working { background: #f59e0b; }
-        .status-error { background: #ef4444; }
-        .status-inactive { background: #6b7280; }
-    </style>
-</head>
-<body class="bg-gray-50">
-    <div class="flex h-screen">
-        <!-- 사이드바 -->
-        <div class="sidebar bg-white border-r border-gray-200 flex flex-col">
-            <!-- 헤더 -->
-            <div class="p-6 border-b border-gray-200">
-                <h1 class="text-xl font-semibold text-gray-900">BigQuery AI</h1>
-                <p class="text-sm text-gray-500 mt-1">데이터 분석 도우미</p>
+{% extends "layout.html" %}
+
+{% block title %}채팅 - BigQuery AI Assistant{% endblock %}
+
+{% block content %}
+<div class="w-full h-full flex flex-col">
+    <!-- 상단 헤더 -->
+    <header class="p-4 border-b border-gray-200 bg-white flex justify-between items-center">
+        <h2 class="text-lg font-semibold text-gray-800">분석 채팅</h2>
+        <div class="flex items-center space-x-4">
+            <div id="profilingStatusWrapper" class="flex items-center text-sm text-gray-600">
+                <span class="status-indicator status-inactive" id="profiling-status-indicator"></span>
+                <span id="profilingStatus">대기 중</span>
             </div>
-
-            <!-- 사이드바 컨텐츠 -->
-            <div class="flex-1 overflow-y-auto">
-                <!-- 프로젝트 설정 섹션 -->
-                <div class="sidebar-section">
-                    <div class="section-header" onclick="toggleSection('project-settings')">
-                        <span class="status-indicator status-inactive" id="project-status"></span>
-                        프로젝트 설정
-                    </div>
-                    <div class="section-content active" id="project-settings">
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">
-                                    GCP Project
-                                    <button id="refreshProjectsButton" 
-                                            class="ml-2 text-xs text-blue-600 hover:text-blue-700"
-                                            onclick="loadGcpProjects()">
-                                        🔄 새로고침
-                                    </button>
-                                </label>
-                                <select id="gcpProjectId" 
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="">프로젝트를 선택하세요...</option>
-                                </select>
-                                <div id="projectLoadingStatus" class="mt-1 text-xs text-gray-500 hidden">
-                                    프로젝트 목록을 불러오는 중...
-                                </div>
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">
-                                    BigQuery Tables
-                                    <button id="refreshTablesButton" 
-                                            class="ml-2 text-xs text-blue-600 hover:text-blue-700 disabled:text-gray-400"
-                                            onclick="loadProjectTables()"
-                                            disabled>
-                                        🔄 새로고침
-                                    </button>
-                                </label>
-                                <div id="tablesContainer" class="border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
-                                    <div id="tablesPlaceholder" class="p-3 text-sm text-gray-500 text-center">
-                                        먼저 프로젝트를 선택하세요
-                                    </div>
-                                    <div id="tablesLoadingStatus" class="p-3 text-xs text-blue-600 text-center hidden">
-                                        <div class="flex items-center justify-center gap-2">
-                                            <div class="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                                            테이블 목록을 불러오는 중...
-                                        </div>
-                                    </div>
-                                    <div id="tablesList" class="hidden"></div>
-                                </div>
-                                <div class="mt-2 text-xs text-gray-500">
-                                    <span id="tableSelectionStatus">선택된 테이블: 0개</span>
-                                    <button id="selectAllTablesButton" 
-                                            class="ml-4 text-blue-600 hover:text-blue-700 disabled:text-gray-400"
-                                            onclick="toggleAllTables()"
-                                            disabled>
-                                        전체 선택/해제
-                                    </button>
-                                </div>
-                            </div>
-                            <button id="startProfilingButton" 
-                                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors disabled:bg-gray-400">
-                                프로파일링 시작
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 프로파일링 섹션 -->
-                <div class="sidebar-section">
-                    <div class="section-header" onclick="toggleSection('profiling-status')">
-                        <span class="status-indicator status-inactive" id="profiling-status"></span>
-                        프로파일링 상태
-                    </div>
-                    <div class="section-content" id="profiling-status">
-                        <div id="profilingProgress" class="hidden">
-                            <div class="space-y-2 mb-4">
-                                <div id="statusSteps"></div>
-                            </div>
-                            <div class="text-xs text-gray-500">
-                                <div id="currentStep">대기 중...</div>
-                            </div>
-                        </div>
-                        <div id="profilingIdle" class="text-sm text-gray-500">
-                            프로파일링을 시작하면 진행 상황이 여기에 표시됩니다.
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 대화 기록 섹션 -->  
-                <div class="sidebar-section">
-                    <div class="section-header" onclick="toggleSection('chat-history')">
-                        <span class="status-indicator status-inactive"></span>
-                        대화 기록
-                    </div>
-                    <div class="section-content" id="chat-history">
-                        <div id="historyList" class="space-y-2">
-                            <div class="text-sm text-gray-500">
-                                대화 기록이 없습니다.
-                            </div>
-                        </div>
-                        <button id="refreshHistoryButton" 
-                                class="w-full mt-4 text-sm text-blue-600 hover:text-blue-700 font-medium">
-                            새로고침
-                        </button>
-                    </div>
-                </div>
-            </div>
+            <button id="startProfilingButton" 
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors disabled:bg-gray-400"
+                    disabled>
+                프로파일링 시작
+            </button>
         </div>
+    </header>
 
-        <!-- 메인 채팅 영역 -->
-        <div class="flex-1 chat-container">
-            <!-- 메시지 영역 -->
-            <div class="messages-area" id="messagesArea">
-                <!-- 초기 환영 메시지 -->
-                <div class="flex justify-center items-center h-full">
-                    <div class="text-center max-w-md">
-                        <div class="text-6xl mb-4">🤖</div>
-                        <h2 class="text-2xl font-semibold text-gray-900 mb-2">BigQuery AI Assistant</h2>
-                        <p class="text-gray-600 mb-6">데이터 프로파일링을 완료한 후 자연어로 질문해보세요.</p>
-                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-left">
-                            <h3 class="font-medium text-blue-900 mb-2">시작하기:</h3>
-                            <ol class="text-sm text-blue-800 space-y-1">
-                                <li>1. 좌측에서 GCP 프로젝트와 테이블 ID 입력</li>
-                                <li>2. 프로파일링 시작 버튼 클릭</li>
-                                <li>3. 완료 후 아래 입력창에서 질문하기</li>
-                            </ol>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 입력 영역 -->
-            <div class="input-area">
-                <div class="input-wrapper">
-                    <textarea id="chatInput" 
-                              class="chat-input" 
-                              placeholder="데이터에 대해 질문해보세요... (예: 가장 많이 사용되는 기기는?)"
-                              rows="1"
-                              disabled></textarea>
-                    <button id="sendButton" class="send-button" disabled>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22,2 15,22 11,13 2,9"></polygon>
-                        </svg>
-                    </button>
-                </div>
-                <div class="flex justify-between items-center mt-2 text-xs text-gray-500">
-                    <div id="inputStatus">프로파일링 완료 후 질문 가능</div>
-                    <div class="flex gap-4">
-                        <button class="text-blue-600 hover:text-blue-700" onclick="selectAnalysisMode('quick')">
-                            빠른 조회
-                        </button>
-                        <button class="text-green-600 hover:text-green-700" onclick="selectAnalysisMode('analyze')">
-                            상세 분석
-                        </button>
-                        <button class="text-purple-600 hover:text-purple-700" onclick="selectAnalysisMode('creative-html')">
-                            HTML 리포트
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
+    <!-- 메시지 영역 -->
+    <div class="messages-area flex-1 bg-gray-50" id="messagesArea">
+        <!-- 초기 메시지가 여기에 표시됩니다 -->
     </div>
 
-    <script>
-        // 전역 변수
-        let currentProjectId = '';
-        let currentTableIds = [];
-        let profilingCompleted = false;
-        let selectedAnalysisMode = 'analyze'; // 기본값
-        let messageHistory = [];
-        let projectTables = [];
-        let selectedTables = new Set();
+    <!-- 입력 영역 -->
+    <div class="input-area">
+        <div class="relative flex items-center">
+            <textarea id="chatInput" 
+                      class="w-full border border-gray-300 rounded-lg py-2 pl-4 pr-24 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                      placeholder="데이터에 대해 질문해보세요..." 
+                      rows="1" 
+                      disabled></textarea>
+            <button id="sendButton" class="absolute right-2 bg-blue-600 text-white rounded-md p-2 disabled:bg-gray-400" disabled>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                </svg>
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
 
-        // DOM 요소 참조
-        const elements = {
-            gcpProjectId: document.getElementById('gcpProjectId'),
-            startProfilingButton: document.getElementById('startProfilingButton'),
-            projectStatus: document.getElementById('project-status'),
-            profilingStatus: document.getElementById('profiling-status'),
-            profilingProgress: document.getElementById('profilingProgress'),
-            profilingIdle: document.getElementById('profilingIdle'),
-            statusSteps: document.getElementById('statusSteps'),
-            currentStep: document.getElementById('currentStep'),
-            messagesArea: document.getElementById('messagesArea'),
-            chatInput: document.getElementById('chatInput'),
-            sendButton: document.getElementById('sendButton'),
-            inputStatus: document.getElementById('inputStatus'),
-            historyList: document.getElementById('historyList'),
-            refreshHistoryButton: document.getElementById('refreshHistoryButton'),
-            projectLoadingStatus: document.getElementById('projectLoadingStatus'),
-            refreshProjectsButton: document.getElementById('refreshProjectsButton'),
-            tablesContainer: document.getElementById('tablesContainer'),
-            tablesPlaceholder: document.getElementById('tablesPlaceholder'),
-            tablesLoadingStatus: document.getElementById('tablesLoadingStatus'),
-            tablesList: document.getElementById('tablesList'),
-            tableSelectionStatus: document.getElementById('tableSelectionStatus'),
-            refreshTablesButton: document.getElementById('refreshTablesButton'),
-            selectAllTablesButton: document.getElementById('selectAllTablesButton')
-        };
+{% block scripts %}
+<script>
+    let currentSettings = { projectId: null, tableIds: [] };
+    let profilingCompleted = false;
 
-        // GCP 프로젝트 목록 로드
-        async function loadGcpProjects() {
-            elements.projectLoadingStatus.classList.remove('hidden');
-            elements.projectLoadingStatus.textContent = '프로젝트 목록을 불러오는 중...';
-            elements.refreshProjectsButton.disabled = true;
-            
-            try {
-                const response = await fetch('/api/gcp-projects');
-                const result = await response.json();
-                
-                if (result.success) {
-                    populateProjectDropdown(result.projects);
-                    elements.projectLoadingStatus.textContent = `${result.count}개 프로젝트 로드 완료`;
-                    
-                    // 현재 기본 프로젝트 선택
-                    await selectCurrentProject();
-                } else {
-                    throw new Error(result.error || '프로젝트 목록을 불러올 수 없습니다.');
-                }
-            } catch (error) {
-                console.error('GCP 프로젝트 로드 오류:', error);
-                elements.projectLoadingStatus.textContent = `오류: ${error.message}`;
-                elements.projectLoadingStatus.classList.add('text-red-500');
-                
-                // 오류 시 수동 입력 옵션 제공
-                populateProjectDropdown([]);
-                addManualInputOption();
-            } finally {
-                elements.refreshProjectsButton.disabled = false;
-                setTimeout(() => {
-                    elements.projectLoadingStatus.classList.add('hidden');
-                    elements.projectLoadingStatus.classList.remove('text-red-500');
-                }, 3000);
-            }
-        }
+    const elements = {
+        startProfilingButton: document.getElementById('startProfilingButton'),
+        profilingStatusIndicator: document.getElementById('profiling-status-indicator'),
+        profilingStatus: document.getElementById('profilingStatus'),
+        messagesArea: document.getElementById('messagesArea'),
+        chatInput: document.getElementById('chatInput'),
+        sendButton: document.getElementById('sendButton'),
+        selectedTablesNavList: document.getElementById('selected-tables-nav-list'),
+    };
 
-        // 프로젝트 드롭다운 채우기
-        function populateProjectDropdown(projects) {
-            const select = elements.gcpProjectId;
-            
-            // 기존 옵션 제거 (첫 번째 옵션 제외)
-            while (select.children.length > 1) {
-                select.removeChild(select.lastChild);
-            }
-            
-            if (projects.length === 0) {
-                const option = document.createElement('option');
-                option.value = '';
-                option.textContent = '프로젝트를 찾을 수 없습니다';
-                option.disabled = true;
-                select.appendChild(option);
-                return;
-            }
-            
-            // 프로젝트 옵션 추가
-            projects.forEach(project => {
-                const option = document.createElement('option');
-                option.value = project.project_id;
-                option.textContent = `${project.display_name} (${project.project_id})`;
-                option.title = `Project ID: ${project.project_id}\nName: ${project.name}`;
-                select.appendChild(option);
+    function updateSelectedTablesNav() {
+        if (!elements.selectedTablesNavList) return;
+        elements.selectedTablesNavList.innerHTML = '';
+
+        if (!currentSettings.tableIds || currentSettings.tableIds.length === 0) {
+            elements.selectedTablesNavList.innerHTML = '<li class="px-3 py-1 text-sm text-gray-400">테이블이 선택되지 않았습니다.</li>';
+        } else {
+            currentSettings.tableIds.forEach(tableId => {
+                const li = document.createElement('li');
+                li.className = 'px-3 py-1 text-sm text-gray-700 truncate';
+                li.textContent = tableId.split('.').pop();
+                li.title = tableId;
+                elements.selectedTablesNavList.appendChild(li);
             });
         }
+    }
 
-        // 현재 기본 프로젝트 선택
-        async function selectCurrentProject() {
-            try {
-                const response = await fetch('/api/gcp-projects/current');
-                const result = await response.json();
-                
-                if (result.success && result.current_project) {
-                    elements.gcpProjectId.value = result.current_project;
-                    validateInputs();
-                }
-            } catch (error) {
-                console.error('현재 프로젝트 조회 오류:', error);
-            }
-        }
-
-        // 수동 입력 옵션 추가 (오류 시)
-        function addManualInputOption() {
-            const select = elements.gcpProjectId;
-            
-            const manualOption = document.createElement('option');
-            manualOption.value = '__manual__';
-            manualOption.textContent = '직접 입력...';
-            select.appendChild(manualOption);
-            
-            // 직접 입력 선택 시 처리
-            select.addEventListener('change', function(e) {
-                if (e.target.value === '__manual__') {
-                    const projectId = prompt('GCP Project ID를 입력하세요:');
-                    if (projectId) {
-                        // 새 옵션 추가
-                        const newOption = document.createElement('option');
-                        newOption.value = projectId;
-                        newOption.textContent = `${projectId} (수동 입력)`;
-                        select.insertBefore(newOption, select.lastElementChild);
-                        select.value = projectId;
-                        validateInputs();
-                        loadProjectTables();
-                    } else {
-                        select.value = '';
-                    }
-                } else if (e.target.value) {
-                    // 정상적인 프로젝트 선택 시 테이블 목록 로드
-                    loadProjectTables();
-                }
-            });
-        }
-
-        // 프로젝트 테이블 목록 로드
-        async function loadProjectTables() {
-            const projectId = elements.gcpProjectId.value;
-            
-            if (!projectId || projectId === '__manual__') {
-                resetTablesUI();
+    function loadSettings() {
+        const savedSettings = localStorage.getItem('bigqueryAISettings');
+        if (savedSettings) {
+            currentSettings = JSON.parse(savedSettings);
+            if (currentSettings.projectId && currentSettings.tableIds.length > 0) {
+                elements.startProfilingButton.disabled = false;
+                showWelcomeMessage();
+                updateSelectedTablesNav();
                 return;
             }
-            
-            // UI 상태 업데이트
-            elements.tablesPlaceholder.classList.add('hidden');
-            elements.tablesLoadingStatus.classList.remove('hidden');
-            elements.tablesList.classList.add('hidden');
-            elements.refreshTablesButton.disabled = true;
-            
-            try {
-                const response = await fetch(`/api/gcp-projects/${encodeURIComponent(projectId)}/tables`);
-                const result = await response.json();
-                
-                if (result.success) {
-                    projectTables = result.tables;
-                    displayTables(result.tables, result.summary);
-                    elements.refreshTablesButton.disabled = false;
-                } else {
-                    throw new Error(result.error || '테이블 목록을 불러올 수 없습니다.');
-                }
-            } catch (error) {
-                console.error('테이블 목록 로드 오류:', error);
-                showTablesError(error.message);
-            } finally {
-                elements.tablesLoadingStatus.classList.add('hidden');
-            }
         }
+        elements.startProfilingButton.disabled = true;
+        showSettingsNeededMessage();
+        updateSelectedTablesNav();
+    }
 
-        // 테이블 목록 표시
-        function displayTables(tables, summary) {
-            if (tables.length === 0) {
-                elements.tablesPlaceholder.innerHTML = '<div class="p-3 text-sm text-gray-500 text-center">이 프로젝트에는 테이블이 없습니다</div>';
-                elements.tablesPlaceholder.classList.remove('hidden');
-                return;
-            }
-            
-            // 데이터셋별로 그룹화
-            const tablesByDataset = {};
-            tables.forEach(table => {
-                if (!tablesByDataset[table.dataset_id]) {
-                    tablesByDataset[table.dataset_id] = [];
-                }
-                tablesByDataset[table.dataset_id].push(table);
-            });
-            
-            let html = '';
-            
-            // 요약 정보
-            html += `
-                <div class="p-3 bg-gray-50 border-b text-xs text-gray-600">
-                    📊 ${summary.total_datasets}개 데이터셋, ${summary.total_tables}개 테이블
-                    ${summary.total_size_mb > 0 ? `(총 ${summary.total_size_mb.toFixed(1)}MB)` : ''}
+    function showWelcomeMessage() {
+        elements.messagesArea.innerHTML = `
+            <div class="flex justify-center items-center h-full">
+                <div class="text-center max-w-md">
+                    <div class="text-6xl mb-4">🤖</div>
+                    <h2 class="text-2xl font-semibold text-gray-900 mb-2">BigQuery AI Assistant</h2>
+                    <p class="text-gray-600 mb-6">'프로파일링 시작' 버튼을 눌러 데이터 분석을 시작하세요.</p>
                 </div>
-            `;
-            
-            // 데이터셋별 테이블 목록
-            Object.keys(tablesByDataset).sort().forEach(datasetId => {
-                const datasetTables = tablesByDataset[datasetId];
-                
-                html += `
-                    <div class="border-b border-gray-100">
-                        <div class="px-3 py-2 bg-gray-50 text-xs font-medium text-gray-700 flex justify-between items-center">
-                            <span>📁 ${datasetId}</span>
-                            <span class="text-gray-500">${datasetTables.length}개 테이블</span>
-                        </div>
-                `;
-                
-                datasetTables.forEach(table => {
-                    const isSelected = selectedTables.has(table.table_id);
-                    const sizeInfo = table.size_mb > 0 ? ` (${table.size_mb}MB)` : '';
-                    const rowInfo = table.num_rows !== null ? ` - ${table.num_rows.toLocaleString()}행` : '';
-                    
-                    html += `
-                        <div class="px-3 py-2 hover:bg-gray-50 border-b border-gray-50">
-                            <label class="flex items-center cursor-pointer text-sm">
-                                <input type="checkbox" 
-                                       class="mr-2 table-checkbox" 
-                                       data-table-id="${table.table_id}"
-                                       ${isSelected ? 'checked' : ''}
-                                       onchange="toggleTableSelection('${table.table_id}')">
-                                <div class="flex-1">
-                                    <div class="font-medium text-gray-800">${table.table_name}</div>
-                                    <div class="text-xs text-gray-500">
-                                        ${table.table_id}${rowInfo}${sizeInfo}
-                                        ${table.has_partition ? ' 🔄' : ''}${table.has_clustering ? ' 🔗' : ''}
-                                    </div>
-                                </div>
-                            </label>
-                        </div>
-                    `;
-                });
-                
-                html += '</div>';
-            });
-            
-            elements.tablesList.innerHTML = html;
-            elements.tablesList.classList.remove('hidden');
-            elements.selectAllTablesButton.disabled = false;
-            
-            updateTableSelectionStatus();
-        }
-
-        // 테이블 선택/해제
-        function toggleTableSelection(tableId) {
-            if (selectedTables.has(tableId)) {
-                selectedTables.delete(tableId);
-            } else {
-                selectedTables.add(tableId);
-            }
-            updateTableSelectionStatus();
-            validateInputs();
-        }
-
-        // 전체 테이블 선택/해제
-        function toggleAllTables() {
-            const checkboxes = document.querySelectorAll('.table-checkbox');
-            const allSelected = selectedTables.size === projectTables.length;
-            
-            if (allSelected) {
-                // 전체 해제
-                selectedTables.clear();
-                checkboxes.forEach(cb => cb.checked = false);
-            } else {
-                // 전체 선택
-                selectedTables.clear();
-                projectTables.forEach(table => selectedTables.add(table.table_id));
-                checkboxes.forEach(cb => cb.checked = true);
-            }
-            
-            updateTableSelectionStatus();
-            validateInputs();
-        }
-
-        // 테이블 선택 상태 업데이트
-        function updateTableSelectionStatus() {
-            const count = selectedTables.size;
-            elements.tableSelectionStatus.textContent = `선택된 테이블: ${count}개`;
-            
-            // currentTableIds 업데이트 (기존 코드 호환성)
-            currentTableIds = Array.from(selectedTables);
-        }
-
-        // 테이블 UI 초기화
-        function resetTablesUI() {
-            elements.tablesPlaceholder.classList.remove('hidden');
-            elements.tablesLoadingStatus.classList.add('hidden');
-            elements.tablesList.classList.add('hidden');
-            elements.tablesPlaceholder.innerHTML = '<div class="p-3 text-sm text-gray-500 text-center">먼저 프로젝트를 선택하세요</div>';
-            elements.refreshTablesButton.disabled = true;
-            elements.selectAllTablesButton.disabled = true;
-            
-            projectTables = [];
-            selectedTables.clear();
-            updateTableSelectionStatus();
-        }
-
-        // 테이블 로드 오류 표시
-        function showTablesError(message) {
-            elements.tablesPlaceholder.innerHTML = `
-                <div class="p-3 text-sm text-red-600 text-center">
-                    ❌ ${message}
-                    <br>
-                    <button onclick="loadProjectTables()" class="mt-2 text-xs text-blue-600 hover:text-blue-700">
-                        다시 시도
-                    </button>
+            </div>`;
+    }
+    
+    function showSettingsNeededMessage() {
+         elements.messagesArea.innerHTML = `
+            <div class="flex justify-center items-center h-full">
+                <div class="text-center max-w-md">
+                    <div class="text-6xl mb-4">⚙️</div>
+                    <h2 class="text-2xl font-semibold text-gray-900 mb-2">설정이 필요합니다</h2>
+                    <p class="text-gray-600 mb-6">좌측 메뉴의 <a href="/settings" class="text-blue-600 font-semibold">프로젝트 설정</a>으로 이동하여 분석할 대상을 먼저 선택해주세요.</p>
                 </div>
-            `;
-            elements.tablesPlaceholder.classList.remove('hidden');
-            elements.refreshTablesButton.disabled = false;
+            </div>`;
+    }
+    
+    function startProfiling() {
+        if (!currentSettings.projectId || currentSettings.tableIds.length === 0) {
+            alert('설정이 올바르지 않습니다. 설정 페이지를 확인해주세요.');
+            return;
         }
 
-        // 사이드바 섹션 토글
-        function toggleSection(sectionId) {
-            const content = document.getElementById(sectionId);
-            const isActive = content.classList.contains('active');
-            
-            // 모든 섹션 닫기
-            document.querySelectorAll('.section-content').forEach(section => {
-                section.classList.remove('active');
-            });
-            
-            // 클릭한 섹션만 열기 (이미 열려있지 않은 경우)
-            if (!isActive) {
-                content.classList.add('active');
-            }
-        }
+        elements.startProfilingButton.disabled = true;
+        elements.startProfilingButton.textContent = '프로파일링 중...';
+        elements.profilingStatusIndicator.className = 'status-indicator status-working';
+        elements.profilingStatus.textContent = '시작 중...';
 
-        // 분석 모드 선택
-        function selectAnalysisMode(mode) {
-            selectedAnalysisMode = mode;
-            
-            // 모든 버튼 스타일 초기화
-            document.querySelectorAll('.input-area button').forEach(btn => {
-                btn.classList.remove('font-semibold');
-            });
-            
-            // 선택된 버튼 강조
-            event.target.classList.add('font-semibold');
-            
-            updateInputStatus();
-        }
+        const tableIdsParam = currentSettings.tableIds.join(',');
+        const source = new EventSource(`/profiling?projectId=${encodeURIComponent(currentSettings.projectId)}&tableIds=${encodeURIComponent(tableIdsParam)}`);
 
-        // 입력 상태 업데이트
-        function updateInputStatus() {
-            if (!profilingCompleted) {
-                elements.inputStatus.textContent = '프로파일링 완료 후 질문 가능';
-            } else {
-                const modeNames = {
-                    'quick': '빠른 조회',
-                    'analyze': '상세 분석', 
-                    'creative-html': 'HTML 리포트'
-                };
-                elements.inputStatus.textContent = `${modeNames[selectedAnalysisMode]} 모드 선택됨`;
-            }
-        }
-
-        // 프로파일링 상태 업데이트
-        function updateProfilingUI(status, step = null, message = null) {
-            const statusClass = {
-                'inactive': 'status-inactive',
-                'working': 'status-working', 
-                'ready': 'status-ready',
-                'error': 'status-error'
-            };
-
-            elements.profilingStatus.className = `status-indicator ${statusClass[status]}`;
+        source.onmessage = function(event) {
+            const data = JSON.parse(event.data);
             
-            if (status === 'working') {
-                elements.profilingProgress.classList.remove('hidden');
-                elements.profilingIdle.classList.add('hidden');
-                if (message) {
-                    elements.currentStep.textContent = message;
-                }
-            } else if (status === 'ready') {
-                elements.profilingProgress.classList.add('hidden');
-                elements.profilingIdle.classList.remove('hidden');
-                elements.profilingIdle.innerHTML = '<div class="text-green-600 text-sm">✅ 프로파일링 완료! 이제 질문할 수 있습니다.</div>';
-                
-                // 채팅 입력 활성화
+            if (data.type === 'status') {
+                elements.profilingStatus.textContent = data.payload.message;
+            } else if (data.type === 'profiling_complete') {
+                profilingCompleted = true;
+                elements.profilingStatusIndicator.className = 'status-indicator status-ready';
+                elements.profilingStatus.textContent = '완료';
                 elements.chatInput.disabled = false;
                 elements.sendButton.disabled = false;
-                profilingCompleted = true;
-                updateInputStatus();
-                
-                // 환영 메시지 업데이트
-                showReadyMessage();
-            }
-        }
-
-        // 프로파일링 완료 후 메시지 표시
-        function showReadyMessage() {
-            elements.messagesArea.innerHTML = `
-                <div class="flex justify-center items-center h-full">
-                    <div class="text-center max-w-md">
-                        <div class="text-6xl mb-4">✅</div>
-                        <h2 class="text-2xl font-semibold text-gray-900 mb-2">준비 완료!</h2>
-                        <p class="text-gray-600 mb-6">이제 데이터에 대해 자유롭게 질문해보세요.</p>
-                        <div class="bg-green-50 border border-green-200 rounded-lg p-4 text-left">
-                            <h3 class="font-medium text-green-900 mb-2">예시 질문:</h3>
-                            <ul class="text-sm text-green-800 space-y-1">
-                                <li>• 테이블에 총 몇 개의 레코드가 있나요?</li>
-                                <li>• 상위 10개 카테고리를 보여주세요</li>
-                                <li>• 월별 트렌드를 분석해주세요</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        // 입력 검증
-        function validateInputs() {
-            const projectId = elements.gcpProjectId.value.trim();
-            const hasSelectedTables = selectedTables.size > 0;
-            const isValid = projectId && hasSelectedTables;
-            
-            elements.startProfilingButton.disabled = !isValid;
-            
-            if (isValid) {
-                elements.projectStatus.className = 'status-indicator status-ready';
-            } else {
-                elements.projectStatus.className = 'status-indicator status-inactive';
-            }
-        }
-
-        // 채팅 입력 자동 크기 조절
-        function autoResizeInput() {
-            const input = elements.chatInput;
-            input.style.height = 'auto';
-            input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-        }
-
-        // 메시지 추가
-        function addMessage(content, isUser = false, type = 'text') {
-            // 환영 메시지 제거
-            if (messageHistory.length === 0) {
-                elements.messagesArea.innerHTML = '';
-            }
-
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message-bubble ${isUser ? 'user-message' : 'ai-message'}`;
-            
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'p-4';
-            
-            if (type === 'html') {
-                contentDiv.innerHTML = content;
-            } else if (type === 'markdown') {
-                contentDiv.innerHTML = marked.parse(content);
-            } else {
-                contentDiv.textContent = content;
-            }
-            
-            messageDiv.appendChild(contentDiv);
-            elements.messagesArea.appendChild(messageDiv);
-            
-            // 스크롤을 맨 아래로
-            elements.messagesArea.scrollTop = elements.messagesArea.scrollHeight;
-            
-            // 히스토리에 추가
-            messageHistory.push({
-                content: content,
-                isUser: isUser,
-                type: type,
-                timestamp: new Date().toISOString()
-            });
-        }
-
-        // 이벤트 리스너
-        elements.gcpProjectId.addEventListener('change', function() {
-            validateInputs();
-            if (this.value && this.value !== '__manual__') {
-                loadProjectTables();
-            } else {
-                resetTablesUI();
-            }
-        });
-        elements.chatInput.addEventListener('input', autoResizeInput);
-        
-        elements.chatInput.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        elements.sendButton.addEventListener('click', sendMessage);
-        elements.startProfilingButton.addEventListener('click', startProfiling);
-        elements.refreshHistoryButton.addEventListener('click', loadHistory);
-
-        // 메시지 전송
-        function sendMessage() {
-            const message = elements.chatInput.value.trim();
-            if (!message || !profilingCompleted) return;
-            
-            // 사용자 메시지 추가
-            addMessage(message, true);
-            
-            // 입력창 초기화
-            elements.chatInput.value = '';
-            autoResizeInput();
-            
-            // AI 응답 (임시)
-            setTimeout(() => {
-                addMessage('메시지를 받았습니다. 현재 Phase 1 단계로 실제 분석 기능은 다음 단계에서 구현됩니다.', false);
-            }, 500);
-        }
-
-        // 프로파일링 시작 (임시)
-        function startProfiling() {
-            currentProjectId = elements.gcpProjectId.value.trim();
-            currentTableIds = Array.from(selectedTables);
-            
-            if (!currentProjectId || currentTableIds.length === 0) {
-                alert('프로젝트와 테이블을 모두 선택해주세요.');
-                return;
-            }
-
-            updateProfilingUI('working');
-            elements.startProfilingButton.disabled = true;
-            elements.startProfilingButton.textContent = '프로파일링 중...';
-            
-            // 임시 프로파일링 시뮬레이션
-            setTimeout(() => {
-                updateProfilingUI('ready');
+                elements.startProfilingButton.textContent = '다시 시작';
                 elements.startProfilingButton.disabled = false;
-                elements.startProfilingButton.textContent = '다시 실행';
-            }, 3000);
+                addMessage(data.payload.report.full_report, false, 'markdown');
+                source.close();
+            } else if (data.type === 'error') {
+                elements.profilingStatusIndicator.className = 'status-indicator status-error';
+                elements.profilingStatus.textContent = '오류';
+                addMessage(`**프로파일링 오류**\n\n${data.payload.message}`, false, 'markdown');
+                source.close();
+                elements.startProfilingButton.disabled = false;
+                elements.startProfilingButton.textContent = '다시 시작';
+            }
+        };
+
+        source.onerror = function(err) {
+            elements.profilingStatusIndicator.className = 'status-indicator status-error';
+            elements.profilingStatus.textContent = '연결 오류';
+            source.close();
+            elements.startProfilingButton.disabled = false;
+            elements.startProfilingButton.textContent = '다시 시작';
+        };
+    }
+    
+    let isFirstMessage = true;
+    function addMessage(content, isUser = false, type = 'text') {
+        if (isFirstMessage) {
+            elements.messagesArea.innerHTML = '';
+            isFirstMessage = false;
         }
 
-        // 기록 로드 (임시)
-        function loadHistory() {
-            elements.historyList.innerHTML = `
-                <div class="text-sm text-gray-500">
-                    Phase 1: 기본 UI만 구현됨<br>
-                    실제 기록 기능은 다음 단계에서 구현
-                </div>
-            `;
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message-bubble p-4 ${isUser ? 'user-message' : 'ai-message'}`;
+        
+        if (type === 'markdown') {
+            messageDiv.innerHTML = marked.parse(content);
+        } else {
+            messageDiv.textContent = content;
         }
+        
+        elements.messagesArea.appendChild(messageDiv);
+        elements.messagesArea.scrollTop = elements.messagesArea.scrollHeight;
+    }
 
-        // 초기화
-        document.addEventListener('DOMContentLoaded', function() {
-            validateInputs();
-            updateInputStatus();
-            
-            // 기본적으로 프로젝트 설정 섹션만 열려있도록
-            document.getElementById('project-settings').classList.add('active');
-            
-            // GCP 프로젝트 목록 자동 로드
-            loadGcpProjects();
-            
-            console.log('BigQuery AI Assistant Phase 1 로드 완료');
-        });
-    </script>
-</body>
-</html>
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSettings();
+        elements.startProfilingButton.addEventListener('click', startProfiling);
+    });
+</script>
+{% endblock %}

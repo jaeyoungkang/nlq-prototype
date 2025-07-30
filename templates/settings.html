@@ -1,0 +1,250 @@
+{% extends "layout.html" %}
+
+{% block title %}프로젝트 설정 - BigQuery AI Assistant{% endblock %}
+
+{% block content %}
+<div class="p-8 overflow-y-auto w-full">
+    <header class="mb-8">
+        <h1 class="text-3xl font-bold text-gray-900">프로젝트 설정</h1>
+        <p class="text-gray-600 mt-2">분석할 GCP 프로젝트와 BigQuery 테이블을 선택하세요.</p>
+    </header>
+
+    <main class="bg-white p-8 rounded-lg shadow-md space-y-6">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+                GCP Project
+                <button id="refreshProjectsButton" class="ml-2 text-xs text-blue-600 hover:text-blue-700" onclick="loadGcpProjects()">
+                    🔄 새로고침
+                </button>
+            </label>
+            <select id="gcpProjectId" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">프로젝트를 선택하세요...</option>
+            </select>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+                BigQuery Tables
+            </label>
+            <div id="tablesContainer" class="border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
+                <div id="tablesPlaceholder" class="p-3 text-sm text-gray-500 text-center">
+                    먼저 프로젝트를 선택하세요
+                </div>
+                <div id="tablesList" class="hidden"></div>
+            </div>
+            <div class="mt-2 flex justify-between items-center text-xs text-gray-500">
+                <span id="tableSelectionStatus">선택된 테이블: 0개</span>
+                <button id="selectAllTablesButton" class="text-blue-600 hover:text-blue-700 disabled:text-gray-400" onclick="toggleAllTables()" disabled>
+                    전체 선택/해제
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <footer class="mt-8 flex justify-end items-center">
+        <button id="saveSettingsButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition-colors disabled:bg-gray-400" disabled>
+            설정 저장
+        </button>
+    </footer>
+    <div id="saveStatus" class="mt-4 text-right text-green-600 font-medium"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let projectTables = [];
+    let selectedTables = new Set();
+
+    const elements = {
+        gcpProjectId: document.getElementById('gcpProjectId'),
+        tablesContainer: document.getElementById('tablesContainer'),
+        tablesPlaceholder: document.getElementById('tablesPlaceholder'),
+        tablesList: document.getElementById('tablesList'),
+        tableSelectionStatus: document.getElementById('tableSelectionStatus'),
+        selectAllTablesButton: document.getElementById('selectAllTablesButton'),
+        saveSettingsButton: document.getElementById('saveSettingsButton'),
+        saveStatus: document.getElementById('saveStatus'),
+        selectedTablesNavList: document.getElementById('selected-tables-nav-list'),
+    };
+
+    function updateSelectedTablesNav() {
+        if (!elements.selectedTablesNavList) return;
+        elements.selectedTablesNavList.innerHTML = '';
+
+        if (selectedTables.size === 0) {
+            elements.selectedTablesNavList.innerHTML = '<li class="px-3 py-1 text-sm text-gray-400">테이블이 선택되지 않았습니다.</li>';
+        } else {
+            selectedTables.forEach(tableId => {
+                const li = document.createElement('li');
+                li.className = 'px-3 py-1 text-sm text-gray-700 truncate';
+                li.textContent = tableId.split('.').pop();
+                li.title = tableId;
+                elements.selectedTablesNavList.appendChild(li);
+            });
+        }
+    }
+
+    function saveSettings() {
+        const projectId = elements.gcpProjectId.value;
+        const tableIds = Array.from(selectedTables);
+
+        if (!projectId || tableIds.length === 0) {
+            alert('프로젝트와 테이블을 하나 이상 선택해주세요.');
+            return;
+        }
+
+        localStorage.setItem('bigqueryAISettings', JSON.stringify({ projectId, tableIds }));
+        
+        elements.saveStatus.textContent = '✅ 설정이 성공적으로 저장되었습니다!';
+        setTimeout(() => { elements.saveStatus.textContent = ''; }, 3000);
+        validateInputs();
+        updateSelectedTablesNav();
+    }
+    
+    function loadSavedSettings() {
+        const savedSettings = localStorage.getItem('bigqueryAISettings');
+        if (savedSettings) {
+            const settings = JSON.parse(savedSettings);
+            selectedTables = new Set(settings.tableIds || []);
+            return settings.projectId;
+        }
+        return null;
+    }
+
+    async function loadGcpProjects() {
+        const savedProjectId = loadSavedSettings();
+        try {
+            const response = await fetch('/api/gcp-projects');
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error);
+
+            populateProjectDropdown(result.projects, savedProjectId);
+            if (elements.gcpProjectId.value) {
+               await loadProjectTables();
+            }
+        } catch (error) {
+            console.error('GCP 프로젝트 로드 오류:', error);
+        } finally {
+            updateSelectedTablesNav();
+        }
+    }
+
+    function populateProjectDropdown(projects, savedProjectId) {
+        const select = elements.gcpProjectId;
+        while (select.children.length > 1) select.removeChild(select.lastChild);
+        
+        projects.forEach(project => {
+            const option = document.createElement('option');
+            option.value = project.project_id;
+            option.textContent = `${project.display_name || project.name} (${project.project_id})`;
+            select.appendChild(option);
+        });
+
+        if (savedProjectId && projects.some(p => p.project_id === savedProjectId)) {
+            select.value = savedProjectId;
+        }
+    }
+
+    async function loadProjectTables() {
+        const projectId = elements.gcpProjectId.value;
+        if (!projectId) {
+            resetTablesUI();
+            return;
+        }
+        
+        elements.tablesPlaceholder.classList.add('hidden');
+        elements.tablesList.classList.remove('hidden');
+        elements.tablesList.innerHTML = '<div class="p-3 text-sm text-gray-500 text-center">테이블 목록을 불러오는 중...</div>';
+
+        try {
+            const response = await fetch(`/api/gcp-projects/${projectId}/tables`);
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error);
+            
+            projectTables = result.tables;
+            displayTables(result.tables);
+        } catch (error) {
+            console.error('테이블 목록 로드 오류:', error);
+            elements.tablesList.innerHTML = `<div class="p-3 text-sm text-red-600 text-center">❌ ${error.message}</div>`;
+        }
+    }
+
+    function displayTables(tables) {
+        if (tables.length === 0) {
+            elements.tablesList.innerHTML = '<div class="p-3 text-sm text-gray-500 text-center">이 프로젝트에는 테이블이 없습니다</div>';
+            return;
+        }
+        
+        const tablesByDataset = tables.reduce((acc, table) => {
+            (acc[table.dataset_id] = acc[table.dataset_id] || []).push(table);
+            return acc;
+        }, {});
+        
+        let html = '';
+        Object.keys(tablesByDataset).sort().forEach(datasetId => {
+            html += `<div class="border-b border-gray-100"><div class="px-3 py-2 bg-gray-50 text-xs font-medium text-gray-700">📁 ${datasetId}</div>`;
+            tablesByDataset[datasetId].forEach(table => {
+                const isSelected = selectedTables.has(table.table_id);
+                html += `
+                    <div class="px-3 py-2 hover:bg-gray-50 border-t border-gray-50">
+                        <label class="flex items-center cursor-pointer text-sm">
+                            <input type="checkbox" class="mr-3 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" data-table-id="${table.table_id}" ${isSelected ? 'checked' : ''} onchange="toggleTableSelection('${table.table_id}')">
+                            <span class="font-medium text-gray-800">${table.table_name}</span>
+                        </label>
+                    </div>`;
+            });
+            html += '</div>';
+        });
+        
+        elements.tablesList.innerHTML = html;
+        elements.selectAllTablesButton.disabled = false;
+        updateTableSelectionStatus();
+    }
+
+    function toggleTableSelection(tableId) {
+        if (selectedTables.has(tableId)) selectedTables.delete(tableId);
+        else selectedTables.add(tableId);
+        updateTableSelectionStatus();
+    }
+
+    function toggleAllTables() {
+        const allSelected = selectedTables.size === projectTables.length;
+        selectedTables.clear();
+        if (!allSelected) projectTables.forEach(table => selectedTables.add(table.table_id));
+        document.querySelectorAll('.table-checkbox').forEach(cb => cb.checked = !allSelected);
+        updateTableSelectionStatus();
+    }
+
+    function updateTableSelectionStatus() {
+        elements.tableSelectionStatus.textContent = `선택된 테이블: ${selectedTables.size}개`;
+        validateInputs();
+        updateSelectedTablesNav();
+    }
+
+    function resetTablesUI() {
+        elements.tablesPlaceholder.classList.remove('hidden');
+        elements.tablesList.classList.add('hidden');
+        elements.tablesList.innerHTML = '';
+        elements.selectAllTablesButton.disabled = true;
+        projectTables = [];
+        selectedTables.clear();
+        updateTableSelectionStatus();
+    }
+
+    function validateInputs() {
+        const projectId = elements.gcpProjectId.value;
+        const hasSelectedTables = selectedTables.size > 0;
+        elements.saveSettingsButton.disabled = !(projectId && hasSelectedTables);
+    }
+    
+    elements.gcpProjectId.addEventListener('change', () => {
+        selectedTables.clear();
+        loadProjectTables();
+    });
+    elements.saveSettingsButton.addEventListener('click', saveSettings);
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadGcpProjects();
+        validateInputs();
+    });
+</script>
+{% endblock %}

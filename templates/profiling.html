@@ -1,0 +1,213 @@
+{% extends "layout.html" %}
+
+{% block title %}프로파일링 기록 - BigQuery AI Assistant{% endblock %}
+
+{% block content %}
+<div class="p-8 overflow-y-auto w-full">
+    <header class="mb-8 flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900">프로파일링 기록</h1>
+            <p class="text-gray-600 mt-2">과거에 실행된 프로파일링 작업 목록입니다. 각 항목을 클릭하여 상세 리포트를 확인하세요.</p>
+        </div>
+        <button id="refreshButton" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-800 font-medium py-2 px-4 rounded-lg text-sm transition-colors">
+            새로고침
+        </button>
+    </header>
+
+    <main class="bg-white rounded-lg shadow-md">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left text-gray-500">
+                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3">프로젝트 ID</th>
+                        <th scope="col" class="px-6 py-3">테이블 수</th>
+                        <th scope="col" class="px-6 py-3">상태</th>
+                        <th scope="col" class="px-6 py-3">시작 시간</th>
+                        <th scope="col" class="px-6 py-3">소요 시간</th>
+                    </tr>
+                </thead>
+                <tbody id="logs-table-body">
+                    <!-- Data will be populated here by JavaScript -->
+                </tbody>
+            </table>
+            <div id="loadingState" class="p-6 text-center text-gray-500">로딩 중...</div>
+            <div id="errorState" class="p-6 text-center text-red-500 hidden"></div>
+            <div id="emptyState" class="p-6 text-center text-gray-500 hidden">기록이 없습니다.</div>
+        </div>
+    </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const elements = {
+        tableBody: document.getElementById('logs-table-body'),
+        loadingState: document.getElementById('loadingState'),
+        errorState: document.getElementById('errorState'),
+        emptyState: document.getElementById('emptyState'),
+        refreshButton: document.getElementById('refreshButton'),
+        selectedTablesNavList: document.getElementById('selected-tables-nav-list'),
+    };
+
+    function updateSelectedTablesNav() {
+        const savedSettings = localStorage.getItem('bigqueryAISettings');
+        if (!elements.selectedTablesNavList) return;
+        
+        elements.selectedTablesNavList.innerHTML = '';
+        if (!savedSettings) {
+            elements.selectedTablesNavList.innerHTML = '<li class="px-3 py-1 text-sm text-gray-400">테이블이 선택되지 않았습니다.</li>';
+            return;
+        }
+        
+        const settings = JSON.parse(savedSettings);
+        if (!settings.tableIds || settings.tableIds.length === 0) {
+            elements.selectedTablesNavList.innerHTML = '<li class="px-3 py-1 text-sm text-gray-400">테이블이 선택되지 않았습니다.</li>';
+        } else {
+            settings.tableIds.forEach(tableId => {
+                const li = document.createElement('li');
+                li.className = 'px-3 py-1 text-sm text-gray-700 truncate';
+                li.textContent = tableId.split('.').pop();
+                li.title = tableId;
+                elements.selectedTablesNavList.appendChild(li);
+            });
+        }
+    }
+
+    async function fetchLogs() {
+        elements.loadingState.classList.remove('hidden');
+        elements.errorState.classList.add('hidden');
+        elements.emptyState.classList.add('hidden');
+        elements.tableBody.innerHTML = '';
+
+        try {
+            const response = await fetch('/logs');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const logs = await response.json();
+
+            elements.loadingState.classList.add('hidden');
+
+            if (logs.error) {
+                throw new Error(logs.error);
+            }
+
+            if (logs.length === 0) {
+                elements.emptyState.classList.remove('hidden');
+                return;
+            }
+            
+            populateTable(logs);
+
+        } catch (e) {
+            elements.loadingState.classList.add('hidden');
+            elements.errorState.textContent = `데이터를 불러오는 중 오류가 발생했습니다: ${e.message}`;
+            elements.errorState.classList.remove('hidden');
+        }
+    }
+    
+    function populateTable(logs) {
+        logs.forEach(log => {
+            const mainRow = document.createElement('tr');
+            mainRow.className = 'bg-white border-b hover:bg-gray-50 cursor-pointer log-item';
+            mainRow.dataset.sessionId = log.id;
+            mainRow.dataset.detailsLoaded = 'false';
+
+            const statusColors = {
+                '완료': 'bg-green-100 text-green-800',
+                '실패': 'bg-red-100 text-red-800',
+                '진행 중': 'bg-yellow-100 text-yellow-800'
+            };
+            const statusColor = statusColors[log.status] || 'bg-gray-100 text-gray-800';
+
+            const startTime = new Date(log.start_time);
+            const endTime = log.end_time ? new Date(log.end_time) : null;
+            let duration = '진행 중';
+            if(endTime) {
+                const diffSeconds = ((endTime - startTime) / 1000);
+                if (diffSeconds < 60) {
+                    duration = `${diffSeconds.toFixed(1)}초`;
+                } else {
+                    duration = `${(diffSeconds / 60).toFixed(1)}분`;
+                }
+            }
+            
+            mainRow.innerHTML = `
+                <td class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">${log.project_id}</td>
+                <td class="px-6 py-4">${log.table_ids ? log.table_ids.length : 0}</td>
+                <td class="px-6 py-4">
+                    <span class="px-2 py-1 text-xs font-medium rounded-full ${statusColor}">${log.status}</span>
+                </td>
+                <td class="px-6 py-4">${startTime.toLocaleString('ko-KR')}</td>
+                <td class="px-6 py-4">${duration}</td>
+            `;
+            elements.tableBody.appendChild(mainRow);
+
+            const detailsRow = document.createElement('tr');
+            detailsRow.className = 'log-details hidden';
+            detailsRow.innerHTML = `<td colspan="5" class="p-4 bg-gray-50 details-content border-b"></td>`;
+            elements.tableBody.appendChild(detailsRow);
+        });
+    }
+
+    async function toggleDetails(rowElement) {
+        const sessionId = rowElement.dataset.sessionId;
+        const detailsLoaded = rowElement.dataset.detailsLoaded === 'true';
+        const detailsRow = rowElement.nextElementSibling;
+        const detailsContent = detailsRow.querySelector('.details-content');
+
+        const isHidden = detailsRow.classList.contains('hidden');
+
+        // Close all other open details
+        document.querySelectorAll('.log-details').forEach(row => {
+            if (row !== detailsRow) {
+                row.classList.add('hidden');
+            }
+        });
+        document.querySelectorAll('.log-item').forEach(row => {
+            if (row !== rowElement) {
+                row.classList.remove('bg-gray-100');
+            }
+        });
+        
+        // Toggle current row
+        detailsRow.classList.toggle('hidden', !isHidden);
+        rowElement.classList.toggle('bg-gray-100', !isHidden);
+
+
+        if (!detailsLoaded && !detailsRow.classList.contains('hidden')) {
+            detailsContent.innerHTML = '<div class="text-center text-gray-500 p-4">상세 내용을 불러오는 중...</div>';
+            try {
+                const response = await fetch(`/logs/${sessionId}`);
+                if (!response.ok) throw new Error('상세 내용을 불러오지 못했습니다.');
+                const data = await response.json();
+                
+                if (data.error) throw new Error(data.error);
+
+                const reportHtml = data.profiling_report && data.profiling_report.full_report
+                    ? marked.parse(data.profiling_report.full_report)
+                    : '<p>상세 리포트가 없습니다.</p>';
+
+                detailsContent.innerHTML = `<article class="prose prose-sm max-w-none p-4">${reportHtml}</article>`;
+                rowElement.dataset.detailsLoaded = 'true';
+
+            } catch (e) {
+                detailsContent.innerHTML = `<div class="text-red-500 p-4">오류: ${e.message}</div>`;
+            }
+        }
+    }
+
+
+    document.addEventListener('DOMContentLoaded', () => {
+        fetchLogs();
+        updateSelectedTablesNav();
+        elements.refreshButton.addEventListener('click', fetchLogs);
+        elements.tableBody.addEventListener('click', (event) => {
+            const row = event.target.closest('.log-item');
+            if (row) {
+                toggleDetails(row);
+            }
+        });
+    });
+</script>
+{% endblock %}
