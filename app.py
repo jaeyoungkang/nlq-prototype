@@ -1,40 +1,64 @@
+# app.py - 메인 애플리케이션 (안전한 Blueprint 등록)
+"""
+BigQuery AI Assistant - 메인 애플리케이션
+"""
+
 import os
-import json
-import time
-import datetime
 import logging
-from typing import List, Dict, Optional, Generator
+import datetime
+from typing import Optional
 from dotenv import load_dotenv
-from flask import Flask, Response, render_template, request, jsonify, send_from_directory
+from flask import Flask, jsonify
 from flask_cors import CORS
 
 import anthropic
 from google.cloud import bigquery
-from google.cloud.exceptions import NotFound, BadRequest
 
-# 데이터베이스 매니저 임포트
+# 기존 모듈들 임포트 (임시로 유지)
 from firestore_db import db_manager
 
-# 유틸리티 함수들 임포트 (누락된 부분 추가)
-from utils.bigquery_utils import validate_table_ids
-from utils.data_utils import (
-    safe_json_serialize, 
-    suggest_chart_config, 
-    analyze_data_structure,
-    generate_summary_insights
-)
+# 새로운 모듈들 안전하게 임포트
+try:
+    from core.analyzer import IntegratedAnalyzer
+    CORE_AVAILABLE = True
+except ImportError:
+    print("Warning: core.analyzer not available, using fallback")
+    CORE_AVAILABLE = False
+    IntegratedAnalyzer = None
 
-# config 패키지에서 프롬프트 함수들 임포트
-from config.prompts import (
-    get_sql_generation_system_prompt,
-    get_analysis_report_prompt,
-    get_html_generation_prompt,
-    get_profiling_system_prompt,
-    get_specific_contextual_analysis_prompt
-)
+try:
+    from api import analysis_bp, init_routes
+    ANALYSIS_ROUTES_AVAILABLE = True
+except ImportError:
+    print("Warning: analysis routes not available")
+    ANALYSIS_ROUTES_AVAILABLE = False
+    analysis_bp = None
+    init_routes = None
 
-# 스키마 관리자 임포트
-from config.schema_config import register_extracted_metadata
+try:
+    from api.gcp_routes import gcp_bp, init_gcp_routes
+    GCP_ROUTES_AVAILABLE = True
+except ImportError:
+    print("Warning: GCP routes not available")
+    GCP_ROUTES_AVAILABLE = False
+    gcp_bp = None
+    init_gcp_routes = None
+
+try:
+    from api.session_routes import session_bp
+    SESSION_ROUTES_AVAILABLE = True
+except ImportError:
+    print("Warning: session routes not available")
+    SESSION_ROUTES_AVAILABLE = False
+    session_bp = None
+
+try:
+    from web.routes import web_bp
+    WEB_ROUTES_AVAILABLE = True
+except ImportError:
+    print("Warning: web routes not available")
+    WEB_ROUTES_AVAILABLE = False
+    web_bp = None
 
 # --- 설정 및 로깅 ---
 
@@ -86,867 +110,99 @@ def initialize_bigquery_client() -> Optional[bigquery.Client]:
 anthropic_client = initialize_anthropic_client()
 bigquery_client = initialize_bigquery_client()
 
-# --- 코어 분석 클래스들 ---
-
-class BigQueryMetadataExtractor:
-    """BigQuery 메타데이터 추출기"""
-    
-    def __init__(self, bigquery_client: bigquery.Client):
-        self.client = bigquery_client
-    
-    def extract_metadata(self, project_id: str, table_ids: List[str]) -> Dict:
-        """테이블 메타데이터 추출"""
-        metadata = {
-            "project_id": project_id,
-            "tables": {},
-            "summary": {
-                "total_tables": len(table_ids),
-                "total_rows": 0,
-                "total_size_bytes": 0
-            },
-            "extracted_at": datetime.datetime.now().isoformat()
-        }
-        
-        for table_id in table_ids:
-            try:
-                table = self.client.get_table(table_id)
-                table_info = {
-                    "table_id": table_id,
-                    "num_rows": table.num_rows,
-                    "num_bytes": table.num_bytes,
-                    "created": table.created.isoformat() if table.created else None,
-                    "modified": table.modified.isoformat() if table.modified else None,
-                    "description": table.description or "",
-                    "schema": [
-                        {
-                            "name": field.name,
-                            "type": field.field_type,
-                            "mode": field.mode,
-                            "description": field.description or ""
-                        }
-                        for field in table.schema
-                    ]
-                }
-                
-                # 파티셔닝 정보 추가
-                if table.time_partitioning:
-                    table_info["partitioning"] = {
-                        "type": table.time_partitioning.type_,
-                        "field": table.time_partitioning.field
-                    }
-                
-                # 클러스터링 정보 추가
-                if table.clustering_fields:
-                    table_info["clustering"] = {
-                        "fields": list(table.clustering_fields)
-                    }
-                
-                metadata["tables"][table_id] = table_info
-                metadata["summary"]["total_rows"] += table.num_rows or 0
-                metadata["summary"]["total_size_bytes"] += table.num_bytes or 0
-                
-            except NotFound:
-                metadata["tables"][table_id] = {"error": "테이블을 찾을 수 없습니다."}
-            except Exception as e:
-                metadata["tables"][table_id] = {"error": str(e)}
-        
-        return metadata
-
-class IntegratedAnalyzer:
-    """통합 분석 엔진"""
-    
-    def __init__(self, anthropic_client: anthropic.Anthropic, bigquery_client: bigquery.Client):
-        self.anthropic_client = anthropic_client
-        self.bigquery_client = bigquery_client
-        self.metadata_extractor = BigQueryMetadataExtractor(bigquery_client)
-    
-    def natural_language_to_sql(self, question: str, project_id: str, table_ids: List[str]) -> str:
-        """자연어 질문을 BigQuery SQL로 변환"""
-        if not self.anthropic_client:
-            raise Exception("Anthropic 클라이언트가 초기화되지 않았습니다.")
-        
-        # 동적 스키마 기반 시스템 프롬프트 생성
-        system_prompt = get_sql_generation_system_prompt(project_id, table_ids)
-        
-        try:
-            response = self.anthropic_client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=1500,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": question}
-                ]
-            )
-            
-            sql_query = response.content[0].text.strip()
-            
-            # SQL 쿼리에서 마크다운 코드 블록 제거
-            sql_query = self._clean_sql_query(sql_query)
-            
-            logger.info(f"생성된 SQL: {sql_query}")
-            return sql_query
-            
-        except Exception as e:
-            raise Exception(f"Claude API 호출 중 오류 발생: {str(e)}")
-    
-    def _clean_sql_query(self, sql_query: str) -> str:
-        """SQL 쿼리에서 마크다운 형식 제거 및 정리"""
-        # 마크다운 코드 블록 제거
-        if '```sql' in sql_query:
-            # ```sql과 ```를 제거
-            sql_query = sql_query.split('```sql')[1] if '```sql' in sql_query else sql_query
-            sql_query = sql_query.split('```')[0] if '```' in sql_query else sql_query
-        elif '```' in sql_query:
-            # 일반 코드 블록 제거
-            parts = sql_query.split('```')
-            if len(parts) >= 3:
-                sql_query = parts[1]  # 코드 블록 내용만 추출
-        
-        # 앞뒤 공백 제거
-        sql_query = sql_query.strip()
-        
-        # 주석이나 설명 제거 (-- 로 시작하는 라인들 중 SQL 키워드가 없는 것들)
-        lines = sql_query.split('\n')
-        cleaned_lines = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            # SQL 주석이지만 실제 SQL 구문이 포함된 경우는 유지
-            if line.startswith('--') and not any(keyword in line.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'GROUP', 'ORDER', 'LIMIT']):
-                continue
-            cleaned_lines.append(line)
-        
-        # 정리된 라인들을 다시 조합
-        sql_query = '\n'.join(cleaned_lines)
-        
-        # 세미콜론이 없으면 추가
-        if not sql_query.rstrip().endswith(';'):
-            sql_query = sql_query.rstrip() + ';'
-        
-        return sql_query
-    
-    def execute_bigquery(self, sql_query: str) -> Dict:
-        """BigQuery에서 SQL 쿼리 실행"""
-        try:
-            logger.info(f"실행할 SQL: {sql_query}")
-            
-            query_job = self.bigquery_client.query(sql_query)
-            results = query_job.result()
-            
-            rows = []
-            for row in results:
-                row_dict = {}
-                try:
-                    if hasattr(row, 'keys') and hasattr(row, 'values'):
-                        for key, value in zip(row.keys(), row.values()):
-                            if isinstance(value, datetime.datetime):
-                                row_dict[key] = value.isoformat()
-                            elif hasattr(value, 'isoformat'):
-                                row_dict[key] = value.isoformat()
-                            else:
-                                row_dict[key] = value
-                    else:
-                        row_dict = dict(row)
-                        for key, value in row_dict.items():
-                            if isinstance(value, datetime.datetime):
-                                row_dict[key] = value.isoformat()
-                            elif hasattr(value, 'isoformat'):
-                                row_dict[key] = value.isoformat()
-                except Exception as e:
-                    logger.error(f"Row 변환 중 오류: {e}")
-                    row_dict = {"error": f"Row 변환 실패: {str(e)}"}
-                
-                rows.append(row_dict)
-            
-            # 안전한 job_stats 생성 (속성이 없을 경우 None 처리)
-            job_stats = {}
-            try:
-                job_stats["bytes_processed"] = getattr(query_job, 'total_bytes_processed', None)
-                job_stats["bytes_billed"] = getattr(query_job, 'total_bytes_billed', None)
-                
-                # creation_time 속성 안전하게 처리
-                creation_time = getattr(query_job, 'creation_time', None) or getattr(query_job, 'created', None)
-                if creation_time and hasattr(creation_time, 'isoformat'):
-                    job_stats["creation_time"] = creation_time.isoformat()
-                else:
-                    job_stats["creation_time"] = None
-                
-                # end_time 속성 안전하게 처리  
-                end_time = getattr(query_job, 'end_time', None) or getattr(query_job, 'ended', None)
-                if end_time and hasattr(end_time, 'isoformat'):
-                    job_stats["end_time"] = end_time.isoformat()
-                else:
-                    job_stats["end_time"] = None
-                    
-                # job_id 추가
-                job_stats["job_id"] = getattr(query_job, 'job_id', None)
-                
-            except Exception as e:
-                logger.warning(f"Job stats 수집 중 오류 (무시됨): {e}")
-                job_stats = {
-                    "bytes_processed": None,
-                    "bytes_billed": None,
-                    "creation_time": None,
-                    "end_time": None,
-                    "job_id": None
-                }
-            
-            return {
-                "success": True,
-                "data": rows,
-                "row_count": len(rows),
-                "job_stats": job_stats
-            }
-            
-        except Exception as e:
-            logger.error(f"BigQuery 실행 중 오류: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "data": [],
-                "error_type": "execution_error"
-            }
-    
-    def generate_analysis_report(self, question: str, sql_query: str, query_results: List[Dict]) -> Dict:
-        """구조화된 분석 리포트 생성"""
-        if not self.anthropic_client:
-            raise Exception("Anthropic 클라이언트가 초기화되지 않았습니다.")
-        
-        if not query_results:
-            return {
-                "report": "분석할 데이터가 없습니다.",
-                "chart_config": None,
-                "data_summary": None,
-                "insights": []
-            }
-        
-        # 데이터 구조 분석
-        data_analysis = analyze_data_structure(query_results)
-        summary_insights = generate_summary_insights(data_analysis, question)
-        
-        # 차트 설정 제안
-        columns = list(query_results[0].keys()) if query_results else []
-        chart_config = suggest_chart_config(query_results, columns)
-        
-        # 데이터 요약 생성
-        data_summary = {
-            "overview": {
-                "total_rows": len(query_results),
-                "columns_count": len(columns),
-                "data_types": {col: stats["type"] for col, stats in data_analysis["columns"].items()},
-                "data_quality_score": data_analysis.get("data_quality", {}).get("overall_score", 0)
-            },
-            "key_statistics": data_analysis["columns"],
-            "quick_insights": summary_insights
-        }
-        
-        # Claude를 사용한 분석 리포트 생성
-        analysis_prompt = get_analysis_report_prompt(
-            question, sql_query, data_analysis, summary_insights, query_results
-        )
-        
-        try:
-            response = self.anthropic_client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=3000,
-                messages=[
-                    {"role": "user", "content": analysis_prompt}
-                ]
-            )
-            
-            analysis_report = response.content[0].text.strip()
-            
-            return {
-                "report": analysis_report,
-                "chart_config": chart_config,
-                "data_summary": data_summary,
-                "insights": summary_insights,
-                "data_analysis": data_analysis
-            }
-            
-        except Exception as e:
-            raise Exception(f"분석 리포트 생성 중 오류 발생: {str(e)}")
-    
-    def generate_html_report(self, question: str, sql_query: str, query_results: List[Dict]) -> Dict:
-        """창의적 HTML 리포트 생성"""
-        if not self.anthropic_client:
-            raise Exception("Anthropic 클라이언트가 초기화되지 않았습니다.")
-        
-        if not query_results:
-            return {
-                "html_content": self._generate_fallback_html(question, []),
-                "quality_score": 60,
-                "attempts": 1,
-                "fallback": True
-            }
-        
-        # HTML 생성 프롬프트
-        html_prompt = get_html_generation_prompt(question, sql_query, query_results)
-        
-        max_attempts = 2
-        for attempt in range(max_attempts):
-            try:
-                response = self.anthropic_client.messages.create(
-                    model="claude-3-5-sonnet-20241022",
-                    max_tokens=4000,
-                    messages=[
-                        {"role": "user", "content": html_prompt}
-                    ]
-                )
-                
-                html_content = response.content[0].text.strip()
-                
-                # HTML 정리
-                if not html_content.startswith('<!DOCTYPE') and not html_content.startswith('<html'):
-                    if '```html' in html_content:
-                        html_content = html_content.split('```html')[1].split('```')[0].strip()
-                    elif '```' in html_content:
-                        html_content = html_content.split('```')[1].strip()
-                
-                # 기본 품질 검증
-                quality_score = self._validate_html_quality(html_content)
-                
-                if quality_score >= 70:
-                    return {
-                        "html_content": html_content,
-                        "quality_score": quality_score,
-                        "attempts": attempt + 1,
-                        "fallback": False
-                    }
-                
-                if attempt < max_attempts - 1:
-                    logger.info(f"HTML 품질 개선 필요 (점수: {quality_score}), 재시도 중...")
-                
-            except Exception as e:
-                logger.error(f"HTML 생성 시도 {attempt + 1} 실패: {str(e)}")
-        
-        # 모든 시도 실패 시 폴백
-        return {
-            "html_content": self._generate_fallback_html(question, query_results),
-            "quality_score": 60,
-            "attempts": max_attempts,
-            "fallback": True
-        }
-    
-    def _validate_html_quality(self, html_content: str) -> int:
-        """HTML 품질 간단 검증"""
-        score = 100
-        
-        if not html_content.startswith('<!DOCTYPE'):
-            score -= 20
-        if 'Chart.js' in html_content and 'cdnjs.cloudflare.com' not in html_content:
-            score -= 20
-        if 'new Chart(' not in html_content:
-            score -= 15
-        if '<style>' not in html_content:
-            score -= 15
-        
-        return max(0, score)
-    
-    def _generate_fallback_html(self, question: str, query_results: List[Dict]) -> str:
-        """폴백 HTML 생성"""
-        return f"""<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{question} - 분석 결과</title>
-    <style>
-        body {{ font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
-        .container {{ max-width: 800px; margin: 0 auto; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
-        .header {{ text-align: center; margin-bottom: 30px; color: #333; }}
-        .data-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        .data-table th {{ background: #4285f4; color: white; padding: 12px; text-align: left; }}
-        .data-table td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
-        .summary {{ background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>📊 {question}</h1>
-            <p>BigQuery 분석 결과 • {len(query_results)}개 결과</p>
-        </div>
-        <div class="summary">
-            <h3>📋 기본 분석 리포트</h3>
-            <p>총 {len(query_results)}개의 레코드가 조회되었습니다.</p>
-        </div>
-    </div>
-</body>
-</html>"""
-
-    def generate_contextual_analysis(self, question: str, sql_query: str, query_results: List[Dict], project_id: str, table_ids: List[str]) -> str:
-        """쿼리 결과에 대한 컨텍스트 분석 생성"""
-        if not self.anthropic_client:
-            raise Exception("Anthropic 클라이언트가 초기화되지 않았습니다.")
-
-        if not query_results:
-            return "분석할 데이터가 없어 컨텍스트 분석을 생략합니다."
-
-        analysis_prompt = get_contextual_analysis_prompt(
-            question, sql_query, query_results, project_id, table_ids
-        )
-
-        try:
-            response = self.anthropic_client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=2000,
-                messages=[
-                    {"role": "user", "content": analysis_prompt}
-                ]
-            )
-            contextual_analysis = response.content[0].text.strip()
-            return contextual_analysis
-        except Exception as e:
-            logger.error(f"컨텍스트 분석 생성 중 오류 발생: {str(e)}")
-            return "결과에 대한 컨텍스트 분석을 생성하는 데 실패했습니다."
-
 # 통합 분석기 인스턴스 생성
-integrated_analyzer = IntegratedAnalyzer(anthropic_client, bigquery_client) if (anthropic_client and bigquery_client) else None
+if CORE_AVAILABLE and anthropic_client and bigquery_client:
+    integrated_analyzer = IntegratedAnalyzer(anthropic_client, bigquery_client)
+else:
+    integrated_analyzer = None
+    logger.warning("통합 분석기를 초기화할 수 없습니다.")
 
-# --- 라우트 정의 ---
+# --- Blueprint 안전 등록 ---
 
-@app.route('/')
-def index():
-    """메인 페이지"""
-    return render_template('index.html')
-
-@app.route('/settings')
-def settings_page():
-    """설정 페이지"""
-    return render_template('settings.html')
-
-@app.route('/history')
-def logs_page():
-    """history 페이지"""
-    return render_template('history.html')
-
-@app.route('/<path:filename>')
-def static_files(filename):
-    """정적 파일 서빙"""
-    return send_from_directory('.', filename)
-
-@app.route('/profiling-history')
-def profiling_history_page():
-    """프로파일링 기록 페이지"""
-    return render_template('profiling.html')
-
-@app.route('/profiling')
-def run_profiling():
-    """메타데이터 프로파일링 (실시간 스트리밍)"""
-    if not integrated_analyzer:
-        def error_generator():
-            yield f"data: {json.dumps({'type': 'error', 'payload': {'message': '분석 엔진이 초기화되지 않았습니다.'}}, ensure_ascii=False)}\n\n"
-        return Response(error_generator(), mimetype='text/event-stream')
-    
-    project_id = request.args.get('projectId', '').strip()
-    table_ids_str = request.args.get('tableIds', '').strip()
-    
-    if not project_id or not table_ids_str:
-        def error_generator():
-            yield f"data: {json.dumps({'type': 'error', 'payload': {'message': 'Project ID와 Table IDs가 필요합니다.'}}, ensure_ascii=False)}\n\n"
-        return Response(error_generator(), mimetype='text/event-stream')
-    
-    # 테이블 ID 파싱 및 검증
-    table_ids = [tid.strip() for tid in table_ids_str.replace('\n', ',').split(',') if tid.strip()]
-    validated_table_ids = validate_table_ids(table_ids)
-    
-    if not validated_table_ids:
-        def error_generator():
-            yield f"data: {json.dumps({'type': 'error', 'payload': {'message': '유효한 테이블 ID가 없습니다.'}}, ensure_ascii=False)}\n\n"
-        return Response(error_generator(), mimetype='text/event-stream')
-    
-    def profiling_generator():
+def safe_register_blueprint(app, blueprint, name, available_flag):
+    """Blueprint를 안전하게 등록"""
+    if available_flag and blueprint is not None:
         try:
-            # 세션 생성
-            session_data = {
-                "id": str(int(time.time() * 1000)),
-                "start_time": datetime.datetime.now().isoformat(),
-                "project_id": project_id,
-                "table_ids": validated_table_ids,
-                "status": "진행 중"
-            }
-            session_id = db_manager.create_analysis_session(session_data)
-            
-            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 0, 'message': '메타데이터 추출 시작...', 'session_id': session_id}}, ensure_ascii=False)}\n\n"
-            
-            # 1단계: 메타데이터 추출
-            yield f"data: {json.dumps({'type': 'log', 'payload': {'message': f'대상 테이블 {len(validated_table_ids)}개 분석 시작'}}, ensure_ascii=False)}\n\n"
-            
-            metadata = integrated_analyzer.metadata_extractor.extract_metadata(project_id, validated_table_ids)
-            
-            # 스키마 정보 등록
-            register_extracted_metadata(project_id, metadata)
-            
-            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 1, 'message': '메타데이터 추출 완료'}}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'metadata', 'payload': safe_json_serialize(metadata)}, ensure_ascii=False)}\n\n"
-            
-            # 2단계: 프로파일링 리포트 생성
-            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 2, 'message': '데이터 프로파일링 리포트 생성 중...'}}, ensure_ascii=False)}\n\n"
-            
-            # 프로파일링 시스템 프롬프트
-            profiling_prompt = get_profiling_system_prompt()
-            
-            # 메타데이터를 기반으로 프로파일링 수행
-            metadata_summary = f"""
-다음은 추출된 BigQuery 테이블 메타데이터입니다:
-
-프로젝트 ID: {project_id}
-분석 대상 테이블: {len(validated_table_ids)}개
-
-{json.dumps(metadata, indent=2, ensure_ascii=False, default=str)}
-"""
-            
-            # 섹션별 프로파일링 수행
-            sections = [
-                ("overview", "데이터셋 개요 분석 중...", "개요"),
-                ("table_analysis", "테이블 상세 분석 중...", "테이블 상세 분석"),
-                ("relationships", "테이블 관계 추론 중...", "테이블 간 관계"),
-                ("business_questions", "비즈니스 질문 도출 중...", "분석 가능 질문"),
-                ("recommendations", "활용 권장사항 도출 중...", "권장사항")
-            ]
-            
-            profiling_report = {
-                "sections": {},
-                "full_report": "",
-                "generated_at": datetime.datetime.now().isoformat()
-            }
-            
-            for section_key, section_message, section_title in sections:
-                yield f"data: {json.dumps({'type': 'log', 'payload': {'message': section_message}}, ensure_ascii=False)}\n\n"
-                
-                section_prompt = f"{profiling_prompt}\n\n{metadata_summary}\n\n위 메타데이터를 분석하여 '{section_title}' 섹션을 작성해주세요."
-                
-                try:
-                    response = integrated_analyzer.anthropic_client.messages.create(
-                        model="claude-3-5-sonnet-20241022",
-                        max_tokens=2000,
-                        messages=[
-                            {"role": "user", "content": section_prompt}
-                        ]
-                    )
-                    
-                    section_content = response.content[0].text.strip()
-                    profiling_report["sections"][section_key] = section_content
-                    
-                    # 섹션별 실시간 스트리밍
-                    yield f"data: {json.dumps({'type': 'report_section', 'payload': {'section': section_key, 'title': section_title, 'content': section_content}}, ensure_ascii=False)}\n\n"
-                    
-                    time.sleep(0.2)  # 각 섹션 간 짧은 대기
-                    
-                except Exception as e:
-                    yield f"data: {json.dumps({'type': 'log', 'payload': {'message': f'{section_title} 생성 중 오류: {str(e)}'}}, ensure_ascii=False)}\n\n"
-                    profiling_report["sections"][section_key] = f"섹션 생성 실패: {str(e)}"
-            
-            # 전체 리포트 조합
-            full_report_parts = ["# 📊 BigQuery 데이터 프로파일링 리포트\n"]
-            section_titles = {
-                "overview": "## 1. 📋 데이터셋 개요",
-                "table_analysis": "## 2. 🔍 테이블 상세 분석",
-                "relationships": "## 3. 🔗 테이블 간 관계",
-                "business_questions": "## 4. ❓ 분석 가능 질문",
-                "recommendations": "## 5. 💡 활용 권장사항"
-            }
-            
-            for section_key in ["overview", "table_analysis", "relationships", "business_questions", "recommendations"]:
-                if section_key in profiling_report["sections"]:
-                    full_report_parts.append(f"{section_titles[section_key]}\n{profiling_report['sections'][section_key]}\n")
-            
-            profiling_report["full_report"] = "\n".join(full_report_parts)
-            
-            # 3단계: 결과 저장
-            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 3, 'message': '결과 저장 중...'}}, ensure_ascii=False)}\n\n"
-            
-            # Firestore에 프로파일링 결과 저장
-            db_manager.save_analysis_result(session_id, 'profiling_report', profiling_report)
-            
-            # 세션 완료 처리
-            db_manager.update_session_status(session_id, "완료")
-            
-            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 4, 'message': '프로파일링 완료', 'session_id': session_id}}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'profiling_complete', 'payload': {'session_id': session_id, 'report': profiling_report}}, ensure_ascii=False)}\n\n"
-            
+            app.register_blueprint(blueprint)
+            logger.info(f"✅ {name} Blueprint 등록 완료")
+            return True
         except Exception as e:
-            logger.error(f"프로파일링 중 오류: {e}")
-            if 'session_id' in locals():
-                db_manager.update_session_status(session_id, "실패", str(e))
-            yield f"data: {json.dumps({'type': 'error', 'payload': {'message': str(e)}}, ensure_ascii=False)}\n\n"
+            logger.error(f"❌ {name} Blueprint 등록 실패: {e}")
+            return False
+    else:
+        logger.warning(f"⚠️ {name} Blueprint 사용 불가")
+        return False
+
+# Blueprint 등록
+registered_blueprints = []
+
+# 웹 페이지 라우트 등록
+if safe_register_blueprint(app, web_bp, "Web Routes", WEB_ROUTES_AVAILABLE):
+    registered_blueprints.append("web")
+
+# 분석 관련 라우트 등록 및 초기화
+if safe_register_blueprint(app, analysis_bp, "Analysis Routes", ANALYSIS_ROUTES_AVAILABLE):
+    registered_blueprints.append("analysis")
+    if init_routes:
+        init_routes(integrated_analyzer, bigquery_client)
+
+# GCP 관련 라우트 등록 및 초기화  
+if safe_register_blueprint(app, gcp_bp, "GCP Routes", GCP_ROUTES_AVAILABLE):
+    registered_blueprints.append("gcp")
+    if init_gcp_routes:
+        init_gcp_routes(bigquery_client)
+
+# 세션 관리 라우트 등록
+if safe_register_blueprint(app, session_bp, "Session Routes", SESSION_ROUTES_AVAILABLE):
+    registered_blueprints.append("session")
+
+# --- 폴백 라우트 (웹 라우트가 없는 경우) ---
+
+if not WEB_ROUTES_AVAILABLE:
+    logger.info("웹 라우트가 없어 폴백 라우트를 등록합니다.")
     
-    return Response(
-        profiling_generator(),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*'
-        }
-    )
+    @app.route('/')
+    def index():
+        """메인 페이지 폴백"""
+        try:
+            from flask import render_template
+            return render_template('index.html')
+        except Exception as e:
+            return f"""
+            <html><body>
+                <h1>BigQuery AI Assistant</h1>
+                <p>서버가 부분적으로 실행 중입니다.</p>
+                <p>Error: {str(e)}</p>
+                <p>등록된 Blueprint: {', '.join(registered_blueprints) if registered_blueprints else 'None'}</p>
+            </body></html>
+            """
 
-@app.route('/quick', methods=['POST'])
-def quick_query():
-    """빠른 조회 - 데이터만 반환"""
-    try:
-        if not integrated_analyzer: return jsonify({"success": False, "error": "분석 엔진이 초기화되지 않았습니다."}), 500
-        data = request.json
-        if not data or 'question' not in data: return jsonify({"success": False, "error": "요청 본문에 'question' 필드가 필요합니다."}), 400
-        
-        question = data['question'].strip()
-        project_id = data.get('project_id', '').strip()
-        table_ids = data.get('table_ids', [])
-        if not question or not project_id or not table_ids: return jsonify({"success": False, "error": "질문, 프로젝트 ID, 테이블 ID가 모두 필요합니다."}), 400
+    @app.route('/settings')
+    def settings_page():
+        """설정 페이지 폴백"""
+        try:
+            from flask import render_template
+            return render_template('settings.html')
+        except Exception as e:
+            return f"<html><body><h1>Settings</h1><p>Error: {str(e)}</p></body></html>"
 
-        sql_query = integrated_analyzer.natural_language_to_sql(question, project_id, table_ids)
-        query_result = integrated_analyzer.execute_bigquery(sql_query)
-        
-        if not query_result["success"]: return jsonify({"success": False, "error": query_result["error"], "generated_sql": sql_query}), 500
-        
-        return jsonify({
-            "success": True, "original_question": question, "generated_sql": sql_query,
-            "data": query_result["data"], "row_count": query_result.get("row_count", 0)
-        })
-    except Exception as e:
-        logger.error(f"빠른 조회 중 오류: {str(e)}")
-        return jsonify({"success": False, "error": f"서버 오류: {str(e)}"}), 500
+    @app.route('/history')
+    def logs_page():
+        """history 페이지 폴백"""
+        try:
+            from flask import render_template
+            return render_template('history.html')
+        except Exception as e:
+            return f"<html><body><h1>History</h1><p>Error: {str(e)}</p></body></html>"
 
-@app.route('/analyze-context', methods=['POST'])
-def analyze_context():
-    """요청된 특정 컨텍스트 분석을 수행"""
-    try:
-        if not integrated_analyzer: return jsonify({"success": False, "error": "분석 엔진이 초기화되지 않았습니다."}), 500
-        data = request.json
-        required_fields = ['question', 'sql_query', 'query_results', 'project_id', 'table_ids', 'analysis_type']
-        if not data or not all(field in data for field in required_fields): return jsonify({"success": False, "error": "필수 필드가 누락되었습니다."}), 400
-
-        analysis = integrated_analyzer.generate_specific_analysis(
-            question=data['question'], sql_query=data['sql_query'], query_results=data['query_results'],
-            project_id=data['project_id'], table_ids=data['table_ids'], analysis_type=data['analysis_type']
-        )
-        return jsonify({"success": True, "analysis": analysis})
-    except Exception as e:
-        logger.error(f"컨텍스트 분석 중 오류: {str(e)}")
-        return jsonify({"success": False, "error": f"서버 오류: {str(e)}"}), 500
-
-@app.route('/analyze', methods=['POST'])
-def structured_analysis():
-    """구조화된 분석 - 차트와 분석 리포트 포함"""
-    try:
-        if not integrated_analyzer:
-            return jsonify({
-                "success": False,
-                "error": "분석 엔진이 초기화되지 않았습니다.",
-                "mode": "structured"
-            }), 500
-
-        if not request.json or 'question' not in request.json:
-            return jsonify({
-                "success": False,
-                "error": "요청 본문에 'question' 필드가 필요합니다.",
-                "mode": "structured"
-            }), 400
-
-        question = request.json['question'].strip()
-        project_id = request.json.get('project_id', '').strip()
-        table_ids = request.json.get('table_ids', [])
-        
-        if isinstance(table_ids, str):
-            table_ids = [tid.strip() for tid in table_ids.replace('\n', ',').split(',') if tid.strip()]
-        
-        if not question:
-            return jsonify({
-                "success": False,
-                "error": "질문이 비어있습니다.",
-                "mode": "structured"
-            }), 400
-        
-        if not project_id or not table_ids:
-            return jsonify({
-                "success": False,
-                "error": "project_id와 table_ids가 필요합니다.",
-                "mode": "structured"
-            }), 400
-        
-        # SQL 생성 및 데이터 조회
-        sql_query = integrated_analyzer.natural_language_to_sql(question, project_id, table_ids)
-        query_result = integrated_analyzer.execute_bigquery(sql_query)
-        
-        if not query_result["success"]:
-            return jsonify({
-                "success": False,
-                "error": query_result["error"],
-                "mode": "structured",
-                "original_question": question,
-                "generated_sql": sql_query,
-                "error_type": query_result.get("error_type", "unknown")
-            }), 500
-        
-        # 구조화된 분석 리포트 생성
-        analysis_result = integrated_analyzer.generate_analysis_report(
-            question, 
-            sql_query, 
-            query_result["data"]
-        )
-        
-        return jsonify({
-            "success": True,
-            "mode": "structured",
-            "original_question": question,
-            "generated_sql": sql_query,
-            "data": query_result["data"],
-            "row_count": query_result.get("row_count", 0),
-            "execution_stats": query_result.get("job_stats", {}),
-            "analysis_report": analysis_result["report"],
-            "chart_config": analysis_result["chart_config"],
-            "data_summary": analysis_result["data_summary"],
-            "insights": analysis_result["insights"],
-            "data_analysis": analysis_result["data_analysis"]
-        })
-        
-    except Exception as e:
-        logger.error(f"구조화된 분석 중 오류: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": f"서버 오류: {str(e)}",
-            "mode": "structured"
-        }), 500
-
-@app.route('/creative-html', methods=['POST'])
-def creative_html_analysis():
-    """창의적 HTML 분석 - Claude가 완전한 HTML 생성"""
-    try:
-        if not integrated_analyzer:
-            return jsonify({
-                "success": False,
-                "error": "분석 엔진이 초기화되지 않았습니다.",
-                "mode": "creative_html"
-            }), 500
-
-        if not request.json or 'question' not in request.json:
-            return jsonify({
-                "success": False,
-                "error": "요청 본문에 'question' 필드가 필요합니다.",
-                "mode": "creative_html"
-            }), 400
-
-        question = request.json['question'].strip()
-        project_id = request.json.get('project_id', '').strip()
-        table_ids = request.json.get('table_ids', [])
-        
-        if isinstance(table_ids, str):
-            table_ids = [tid.strip() for tid in table_ids.replace('\n', ',').split(',') if tid.strip()]
-        
-        if not question:
-            return jsonify({
-                "success": False,
-                "error": "질문이 비어있습니다.",
-                "mode": "creative_html"
-            }), 400
-        
-        if not project_id or not table_ids:
-            return jsonify({
-                "success": False,
-                "error": "project_id와 table_ids가 필요합니다.",
-                "mode": "creative_html"
-            }), 400
-        
-        # SQL 생성 및 데이터 조회
-        sql_query = integrated_analyzer.natural_language_to_sql(question, project_id, table_ids)
-        query_result = integrated_analyzer.execute_bigquery(sql_query)
-        
-        if not query_result["success"]:
-            return jsonify({
-                "success": False,
-                "error": query_result["error"],
-                "mode": "creative_html",
-                "original_question": question,
-                "generated_sql": sql_query,
-                "error_type": query_result.get("error_type", "unknown")
-            }), 500
-        
-        # HTML 리포트 생성
-        html_result = integrated_analyzer.generate_html_report(
-            question, 
-            sql_query, 
-            query_result["data"]
-        )
-        
-        return jsonify({
-            "success": True,
-            "mode": "creative_html",
-            "original_question": question,
-            "generated_sql": sql_query,
-            "row_count": query_result.get("row_count", 0),
-            "execution_stats": query_result.get("job_stats", {}),
-            "html_content": html_result["html_content"],
-            "quality_score": html_result["quality_score"],
-            "attempts": html_result["attempts"],
-            "is_fallback": html_result.get("fallback", False)
-        })
-        
-    except Exception as e:
-        logger.error(f"창의적 HTML 분석 중 오류: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": f"서버 오류: {str(e)}",
-            "mode": "creative_html"
-        }), 500
-
-# --- 세션 관리 라우트 ---
-@app.route('/api/all-logs')
-def get_all_logs():
-    """저장된 모든 로그 기록을 반환"""
-    try:
-        limit = int(request.args.get('limit', 100))
-        logs = db_manager.get_all_logs(limit=limit)
-        logger.info(f"전체 로그 조회: {len(logs)}개 항목")
-        return jsonify(logs)
-    except Exception as e:
-        logger.error(f"전체 로그 조회 중 오류: {e}")
-        return jsonify({"error": "전체 로그를 불러오는 중 오류가 발생했습니다."}), 500
-    
-@app.route('/logs')
-def get_logs():
-    """저장된 분석 작업 기록을 반환"""
-    try:
-        page = int(request.args.get('page', 1))
-        limit = int(request.args.get('limit', 20))
-        project_id = request.args.get('project_id')
-        
-        logs = db_manager.get_analysis_sessions(limit=limit, project_id=project_id)
-        
-        logger.info(f"기록 조회: {len(logs)}개 항목")
-        return jsonify(logs)
-        
-    except Exception as e:
-        logger.error(f"기록 조회 중 오류: {e}")
-        return jsonify({"error": "기록을 불러오는 중 오류가 발생했습니다."}), 500
-
-@app.route('/logs/<session_id>')
-def get_log_detail(session_id):
-    """특정 세션의 상세 정보와 로그를 반환"""
-    try:
-        include_logs = request.args.get('include_logs', 'true').lower() == 'true'
-        log = db_manager.get_analysis_session_with_logs(session_id, include_logs)
-        if not log:
-            return jsonify({"error": "세션을 찾을 수 없습니다."}), 404
-        return jsonify(log)
-    except Exception as e:
-        logger.error(f"세션 조회 중 오류: {e}")
-        return jsonify({"error": "세션 조회 중 오류가 발생했습니다."}), 500
-
-@app.route('/logs/<session_id>', methods=['DELETE'])
-def delete_log(session_id):
-    """분석 세션을 삭제"""
-    try:
-        success = db_manager.delete_analysis_session(session_id)
-        if success:
-            return jsonify({"message": "세션이 삭제되었습니다."})
-        else:
-            return jsonify({"error": "세션을 찾을 수 없습니다."}), 404
-    except Exception as e:
-        logger.error(f"세션 삭제 중 오류: {e}")
-        return jsonify({"error": "세션 삭제 중 오류가 발생했습니다."}), 500
+    @app.route('/profiling-history')
+    def profiling_history_page():
+        """프로파일링 기록 페이지 폴백"""
+        try:
+            from flask import render_template
+            return render_template('profiling.html')
+        except Exception as e:
+            return f"<html><body><h1>Profiling</h1><p>Error: {str(e)}</p></body></html>"
 
 # --- 유틸리티 라우트 ---
 
@@ -956,254 +212,23 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.datetime.now().isoformat(),
-        "bigquery_client": "configured" if bigquery_client else "not configured",
         "services": {
             "anthropic": "configured" if ANTHROPIC_API_KEY else "not configured",
             "bigquery": "configured" if bigquery_client else "not configured",
             "firestore": "configured" if db_manager.db else "not configured"
         },
-        "supported_modes": ["quick", "analyze", "creative_html"],
-        "version": "1.0.0-integrated"
+        "modules": {
+            "core": CORE_AVAILABLE,
+            "analysis_routes": ANALYSIS_ROUTES_AVAILABLE,
+            "gcp_routes": GCP_ROUTES_AVAILABLE,
+            "session_routes": SESSION_ROUTES_AVAILABLE,
+            "web_routes": WEB_ROUTES_AVAILABLE
+        },
+        "registered_blueprints": registered_blueprints,
+        "integrated_analyzer": "initialized" if integrated_analyzer else "not initialized",
+        "supported_modes": ["quick", "analyze", "creative_html"] if integrated_analyzer else [],
+        "version": "2.0.0-safe-modular"
     })
-
-@app.route('/stats')
-def get_stats():
-    """통계 정보 조회"""
-    try:
-        stats = db_manager.get_project_stats()
-        return jsonify(stats)
-    except Exception as e:
-        logger.error(f"통계 조회 중 오류: {e}")
-        return jsonify({"error": "통계 조회 중 오류가 발생했습니다."}), 500
-
-@app.route('/api/gcp-projects', methods=['GET'])
-def get_gcp_projects():
-    """인증된 GCP 계정의 프로젝트 목록 조회 (BigQuery 접근 가능한 프로젝트)"""
-    try:
-        if not bigquery_client:
-            return jsonify({
-                "success": False,
-                "error": "BigQuery 클라이언트가 초기화되지 않았습니다.",
-                "projects": []
-            }), 500
-
-        projects = []
-        
-        # 방법 1: 현재 BigQuery 클라이언트의 기본 프로젝트
-        current_project = bigquery_client.project
-        if current_project:
-            projects.append({
-                "project_id": current_project,
-                "name": current_project,
-                "display_name": f"{current_project} (기본 프로젝트)",
-                "is_default": True
-            })
-        
-        # 방법 2: 환경 변수나 다른 방법으로 추가 프로젝트 찾기
-        import os
-        # GOOGLE_CLOUD_PROJECT 환경 변수 확인
-        env_project = os.getenv('GOOGLE_CLOUD_PROJECT')
-        if env_project and env_project != current_project:
-            projects.append({
-                "project_id": env_project,
-                "name": env_project,
-                "display_name": f"{env_project} (환경 변수)",
-                "is_default": False
-            })
-        
-        # 방법 3: BigQuery 데이터셋을 통해 접근 가능한 프로젝트 찾기 (옵션)
-        try:
-            # 현재 프로젝트의 데이터셋 나열로 프로젝트 접근 권한 확인
-            datasets = list(bigquery_client.list_datasets(max_results=1))
-            logger.info(f"BigQuery 접근 권한 확인됨: {current_project}")
-        except Exception as e:
-            logger.warning(f"BigQuery 접근 권한 확인 실패: {e}")
-        
-        # 중복 제거
-        seen_projects = set()
-        unique_projects = []
-        for project in projects:
-            if project["project_id"] not in seen_projects:
-                seen_projects.add(project["project_id"])
-                unique_projects.append(project)
-        
-        # 프로젝트 ID 순으로 정렬 (기본 프로젝트는 맨 위)
-        unique_projects.sort(key=lambda x: (not x.get("is_default", False), x["project_id"]))
-        
-        logger.info(f"접근 가능한 GCP 프로젝트 {len(unique_projects)}개 조회 완료")
-        
-        return jsonify({
-            "success": True,
-            "projects": unique_projects,
-            "count": len(unique_projects)
-        })
-        
-    except Exception as e:
-        logger.error(f"GCP 프로젝트 조회 중 오류: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": f"프로젝트 조회 실패: {str(e)}",
-            "projects": []
-        }), 500
-
-@app.route('/api/gcp-projects/<project_id>/tables', methods=['GET'])
-def get_project_tables(project_id):
-    """특정 프로젝트의 BigQuery 테이블 목록 조회"""
-    try:
-        if not bigquery_client:
-            return jsonify({
-                "success": False,
-                "error": "BigQuery 클라이언트가 초기화되지 않았습니다.",
-                "tables": []
-            }), 500
-
-        # 프로젝트 ID 검증
-        if not project_id or not project_id.strip():
-            return jsonify({
-                "success": False,
-                "error": "유효한 프로젝트 ID가 필요합니다.",
-                "tables": []
-            }), 400
-
-        tables = []
-        dataset_count = 0
-        
-        try:
-            # 프로젝트의 모든 데이터셋 조회
-            datasets = bigquery_client.list_datasets(project=project_id)
-            
-            for dataset in datasets:
-                dataset_count += 1
-                dataset_id = dataset.dataset_id
-                
-                try:
-                    # 각 데이터셋의 테이블 목록 조회
-                    dataset_ref = bigquery_client.dataset(dataset_id, project=project_id)
-                    tables_in_dataset = bigquery_client.list_tables(dataset_ref)
-                    
-                    for table in tables_in_dataset:
-                        table_full_id = f"{project_id}.{dataset_id}.{table.table_id}"
-                        
-                        # 테이블 메타데이터 조회 (기본 정보만)
-                        try:
-                            table_ref = bigquery_client.get_table(table_full_id)
-                            
-                            tables.append({
-                                "table_id": table_full_id,
-                                "project_id": project_id,
-                                "dataset_id": dataset_id,
-                                "table_name": table.table_id,
-                                "full_name": table_full_id,
-                                "display_name": f"{dataset_id}.{table.table_id}",
-                                "table_type": table_ref.table_type,
-                                "num_rows": table_ref.num_rows,
-                                "num_bytes": table_ref.num_bytes,
-                                "created": table_ref.created.isoformat() if table_ref.created else None,
-                                "modified": table_ref.modified.isoformat() if table_ref.modified else None,
-                                "description": table_ref.description or "",
-                                "size_mb": round((table_ref.num_bytes or 0) / (1024 * 1024), 2),
-                                "has_partition": bool(table_ref.time_partitioning),
-                                "has_clustering": bool(table_ref.clustering_fields)
-                            })
-                            
-                        except Exception as table_error:
-                            # 개별 테이블 정보 조회 실패 시 기본 정보만 저장
-                            logger.warning(f"테이블 메타데이터 조회 실패 {table_full_id}: {table_error}")
-                            tables.append({
-                                "table_id": table_full_id,
-                                "project_id": project_id,
-                                "dataset_id": dataset_id,
-                                "table_name": table.table_id,
-                                "full_name": table_full_id,
-                                "display_name": f"{dataset_id}.{table.table_id}",
-                                "table_type": "TABLE",
-                                "num_rows": None,
-                                "num_bytes": None,
-                                "created": None,
-                                "modified": None,
-                                "description": "메타데이터 조회 실패",
-                                "size_mb": 0,
-                                "has_partition": False,
-                                "has_clustering": False,
-                                "error": str(table_error)
-                            })
-                            
-                except Exception as dataset_error:
-                    logger.warning(f"데이터셋 테이블 조회 실패 {dataset_id}: {dataset_error}")
-                    continue
-        
-        except Exception as project_error:
-            logger.error(f"프로젝트 데이터셋 조회 실패 {project_id}: {project_error}")
-            return jsonify({
-                "success": False,
-                "error": f"프로젝트 '{project_id}'의 데이터셋 조회 실패: {str(project_error)}",
-                "tables": []
-            }), 500
-        
-        # 테이블을 데이터셋별, 이름별로 정렬
-        tables.sort(key=lambda x: (x["dataset_id"], x["table_name"]))
-        
-        logger.info(f"프로젝트 '{project_id}'에서 {dataset_count}개 데이터셋, {len(tables)}개 테이블 조회 완료")
-        
-        return jsonify({
-            "success": True,
-            "project_id": project_id,
-            "tables": tables,
-            "dataset_count": dataset_count,
-            "table_count": len(tables),
-            "summary": {
-                "total_tables": len(tables),
-                "total_datasets": dataset_count,
-                "total_size_mb": sum(t.get("size_mb", 0) for t in tables),
-                "partitioned_tables": sum(1 for t in tables if t.get("has_partition", False)),
-                "clustered_tables": sum(1 for t in tables if t.get("has_clustering", False))
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"테이블 목록 조회 중 오류: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": f"테이블 목록 조회 실패: {str(e)}",
-            "tables": []
-        }), 500
-    
-@app.route('/api/gcp-projects/current', methods=['GET'])
-def get_current_gcp_project():
-    """현재 설정된 기본 GCP 프로젝트 조회"""
-    try:
-        if not bigquery_client:
-            return jsonify({
-                "success": False,
-                "error": "BigQuery 클라이언트가 초기화되지 않았습니다.",
-                "current_project": None
-            }), 500
-        
-        current_project = bigquery_client.project
-        
-        return jsonify({
-            "success": True,
-            "current_project": current_project
-        })
-        
-    except Exception as e:
-        logger.error(f"현재 프로젝트 조회 중 오류: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "current_project": None
-        }), 500
-
-# --- 인증 라우트 ---
-@app.route('/api/auth/status')
-def auth_status():
-    """GCP 인증 상태를 확인합니다."""
-    is_authenticated = bigquery_client is not None
-    return jsonify({
-        "authenticated": is_authenticated,
-        "project_id": bigquery_client.project if is_authenticated else None
-    })
-
 
 # --- 오류 핸들러 ---
 
@@ -1211,7 +236,8 @@ def auth_status():
 def not_found(error):
     return jsonify({
         "success": False,
-        "error": "엔드포인트를 찾을 수 없습니다."
+        "error": "엔드포인트를 찾을 수 없습니다.",
+        "available_blueprints": registered_blueprints
     }), 404
 
 @app.errorhandler(500)
@@ -1222,23 +248,25 @@ def internal_error(error):
         "error": "내부 서버 오류가 발생했습니다."
     }), 500
 
+# --- 메인 실행 ---
+
 if __name__ == '__main__':
-    # 환경 변수 확인
-    if not ANTHROPIC_API_KEY:
-        logger.warning("경고: ANTHROPIC_API_KEY 환경 변수가 설정되지 않았습니다.")
-    
-    if not bigquery_client:
-        logger.warning("경고: BigQuery 클라이언트가 초기화되지 않았습니다. GCP 인증이 필요합니다.")
-    
-    if not integrated_analyzer:
-        logger.warning("경고: 통합 분석기가 초기화되지 않았습니다.")
-    
-    logger.info("통합 BigQuery 분석기 서버 시작")
+    logger.info("=== BigQuery AI Assistant 서버 시작 ===")
     logger.info(f"Anthropic API 상태: {'사용 가능' if anthropic_client else '사용 불가'}")
     logger.info(f"BigQuery 상태: {'사용 가능' if bigquery_client else '사용 불가'}")
     logger.info(f"Firestore 상태: {'사용 가능' if db_manager.db else '사용 불가'}")
-    logger.info("지원 모드: 빠른 조회(/quick), 구조화된 분석(/analyze), 창의적 HTML(/creative-html), 인증 상태(/api/auth/status)")
+    logger.info(f"통합 분석기 상태: {'사용 가능' if integrated_analyzer else '사용 불가'}")
+    
+    logger.info("모듈 가용성:")
+    logger.info(f"  ├── Core: {'✅' if CORE_AVAILABLE else '❌'}")
+    logger.info(f"  ├── Analysis Routes: {'✅' if ANALYSIS_ROUTES_AVAILABLE else '❌'}")
+    logger.info(f"  ├── GCP Routes: {'✅' if GCP_ROUTES_AVAILABLE else '❌'}")
+    logger.info(f"  ├── Session Routes: {'✅' if SESSION_ROUTES_AVAILABLE else '❌'}")
+    logger.info(f"  └── Web Routes: {'✅' if WEB_ROUTES_AVAILABLE else '❌'}")
+    
+    logger.info(f"등록된 Blueprint: {', '.join(registered_blueprints) if registered_blueprints else 'None'}")
     
     # Cloud Run에서는 PORT 환경변수 사용
     port = int(os.getenv('PORT', 8080))
+    logger.info(f"서버 시작: http://0.0.0.0:{port}")
     app.run(debug=False, host='0.0.0.0', port=port)
