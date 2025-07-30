@@ -893,7 +893,18 @@ def creative_html_analysis():
         }), 500
 
 # --- 세션 관리 라우트 ---
-
+@app.route('/api/all-logs')
+def get_all_logs():
+    """저장된 모든 로그 기록을 반환"""
+    try:
+        limit = int(request.args.get('limit', 100))
+        logs = db_manager.get_all_logs(limit=limit)
+        logger.info(f"전체 로그 조회: {len(logs)}개 항목")
+        return jsonify(logs)
+    except Exception as e:
+        logger.error(f"전체 로그 조회 중 오류: {e}")
+        return jsonify({"error": "전체 로그를 불러오는 중 오류가 발생했습니다."}), 500
+    
 @app.route('/logs')
 def get_logs():
     """저장된 분석 작업 기록을 반환"""

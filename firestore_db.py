@@ -241,7 +241,51 @@ class FirestoreManager:
         except Exception as e:
             logger.error(f"로그 조회 중 오류: {e}")
             return []
-    
+
+    def get_all_logs(self, limit: int = 100) -> List[Dict]:
+        """
+        모든 세션의 모든 로그를 조회합니다 (Collection Group Query).
+        **참고**: 이 쿼리가 작동하려면 Firestore에서 'logs' 컬렉션 그룹에 대한
+        'firestore_timestamp' 내림차순 단일 필드 색인이 필요합니다.
+        """
+        if not self.db:
+            return []
+        
+        try:
+            # 'logs'라는 ID를 가진 모든 컬렉션(서브컬렉션 포함)을 쿼리합니다.
+            query = self.db.collection_group('logs') \
+                          .order_by('firestore_timestamp', direction=firestore.Query.DESCENDING) \
+                          .limit(limit)
+            
+            docs = query.stream()
+            
+            all_logs = []
+            for doc in docs:
+                log_data = doc.to_dict()
+                log_data['id'] = doc.id
+                
+                # 프론트엔드에서 사용할 수 있도록 타임스탬프 형식 보장
+                # add_log에서 이미 isoformat으로 저장하지만, 만약을 위해 방어 코드 추가
+                if 'timestamp' not in log_data or not isinstance(log_data.get('timestamp'), str):
+                    firestore_ts = log_data.get('firestore_timestamp')
+                    if firestore_ts and hasattr(firestore_ts, 'isoformat'):
+                        log_data['timestamp'] = firestore_ts.isoformat()
+                    else:
+                        # Firestore 타임스탬프가 없는 경우 현재 시간으로 대체
+                        log_data['timestamp'] = datetime.now().isoformat()
+
+                all_logs.append(log_data)
+            
+            logger.info(f"전체 로그 {len(all_logs)}개 조회 완료 (제한: {limit})")
+            return all_logs
+            
+        except Exception as e:
+            logger.error(f"전체 로그 조회 중 오류 발생: {e}")
+            # Firestore 인덱스 관련 오류 메시지를 포함할 수 있음
+            if "requires an index" in str(e).lower():
+                logger.error("Firestore 인덱스가 필요합니다. 'logs' 컬렉션 그룹에 'firestore_timestamp' (내림차순) 필드 색인을 생성하세요.")
+            return []
+
     def delete_analysis_session(self, session_id: str) -> bool:
         """분석 세션과 모든 로그 삭제"""
         if not self.db:
