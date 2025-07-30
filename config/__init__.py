@@ -18,10 +18,6 @@ from .prompts import (
     get_html_generation_prompt,
     get_profiling_system_prompt,
     get_sql_query_generation_prompt,
-    get_error_analysis_prompt,
-    get_query_optimization_prompt,
-    get_data_insight_prompt,
-    get_comparative_analysis_prompt
 )
 
 __all__ = [

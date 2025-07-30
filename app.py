@@ -15,6 +15,26 @@ from google.cloud.exceptions import NotFound, BadRequest
 # 데이터베이스 매니저 임포트
 from firestore_db import db_manager
 
+# 유틸리티 함수들 임포트 (누락된 부분 추가)
+from utils.bigquery_utils import validate_table_ids
+from utils.data_utils import (
+    safe_json_serialize, 
+    suggest_chart_config, 
+    analyze_data_structure,
+    generate_summary_insights
+)
+
+# config 패키지에서 프롬프트 함수들 임포트
+from config.prompts import (
+    get_sql_generation_system_prompt,
+    get_analysis_report_prompt,
+    get_html_generation_prompt,
+    get_profiling_system_prompt
+)
+
+# 스키마 관리자 임포트
+from config.schema_config import register_extracted_metadata
+
 # --- 설정 및 로깅 ---
 
 # .env.local 파일에서 환경변수 로드
@@ -65,7 +85,7 @@ def initialize_bigquery_client() -> Optional[bigquery.Client]:
 anthropic_client = initialize_anthropic_client()
 bigquery_client = initialize_bigquery_client()
 
-# --- 코어 분석 클래스들 (임시 구현) ---
+# --- 코어 분석 클래스들 ---
 
 class BigQueryMetadataExtractor:
     """BigQuery 메타데이터 추출기"""
@@ -82,7 +102,8 @@ class BigQueryMetadataExtractor:
                 "total_tables": len(table_ids),
                 "total_rows": 0,
                 "total_size_bytes": 0
-            }
+            },
+            "extracted_at": datetime.datetime.now().isoformat()
         }
         
         for table_id in table_ids:
@@ -94,6 +115,7 @@ class BigQueryMetadataExtractor:
                     "num_bytes": table.num_bytes,
                     "created": table.created.isoformat() if table.created else None,
                     "modified": table.modified.isoformat() if table.modified else None,
+                    "description": table.description or "",
                     "schema": [
                         {
                             "name": field.name,
@@ -104,6 +126,20 @@ class BigQueryMetadataExtractor:
                         for field in table.schema
                     ]
                 }
+                
+                # 파티셔닝 정보 추가
+                if table.time_partitioning:
+                    table_info["partitioning"] = {
+                        "type": table.time_partitioning.type_,
+                        "field": table.time_partitioning.field
+                    }
+                
+                # 클러스터링 정보 추가
+                if table.clustering_fields:
+                    table_info["clustering"] = {
+                        "fields": list(table.clustering_fields)
+                    }
+                
                 metadata["tables"][table_id] = table_info
                 metadata["summary"]["total_rows"] += table.num_rows or 0
                 metadata["summary"]["total_size_bytes"] += table.num_bytes or 0
@@ -116,7 +152,7 @@ class BigQueryMetadataExtractor:
         return metadata
 
 class IntegratedAnalyzer:
-    """통합 분석 엔진 (강화 버전)"""
+    """통합 분석 엔진"""
     
     def __init__(self, anthropic_client: anthropic.Anthropic, bigquery_client: bigquery.Client):
         self.anthropic_client = anthropic_client
@@ -124,7 +160,7 @@ class IntegratedAnalyzer:
         self.metadata_extractor = BigQueryMetadataExtractor(bigquery_client)
     
     def natural_language_to_sql(self, question: str, project_id: str, table_ids: List[str]) -> str:
-        """자연어 질문을 BigQuery SQL로 변환 (동적 스키마 기반)"""
+        """자연어 질문을 BigQuery SQL로 변환"""
         if not self.anthropic_client:
             raise Exception("Anthropic 클라이언트가 초기화되지 않았습니다.")
         
@@ -149,7 +185,7 @@ class IntegratedAnalyzer:
             raise Exception(f"Claude API 호출 중 오류 발생: {str(e)}")
     
     def execute_bigquery(self, sql_query: str) -> Dict:
-        """BigQuery에서 SQL 쿼리 실행 (개선된 버전)"""
+        """BigQuery에서 SQL 쿼리 실행"""
         try:
             logger.info(f"실행할 SQL: {sql_query}")
             
@@ -203,7 +239,7 @@ class IntegratedAnalyzer:
             }
     
     def generate_analysis_report(self, question: str, sql_query: str, query_results: List[Dict]) -> Dict:
-        """구조화된 분석 리포트 생성 (완전한 구현)"""
+        """구조화된 분석 리포트 생성"""
         if not self.anthropic_client:
             raise Exception("Anthropic 클라이언트가 초기화되지 않았습니다.")
         
@@ -232,8 +268,7 @@ class IntegratedAnalyzer:
                 "data_quality_score": data_analysis.get("data_quality", {}).get("overall_score", 0)
             },
             "key_statistics": data_analysis["columns"],
-            "quick_insights": summary_insights,
-            "relationships": data_analysis.get("relationships", [])
+            "quick_insights": summary_insights
         }
         
         # Claude를 사용한 분석 리포트 생성
@@ -264,7 +299,7 @@ class IntegratedAnalyzer:
             raise Exception(f"분석 리포트 생성 중 오류 발생: {str(e)}")
     
     def generate_html_report(self, question: str, sql_query: str, query_results: List[Dict]) -> Dict:
-        """창의적 HTML 리포트 생성 (완전한 구현)"""
+        """창의적 HTML 리포트 생성"""
         if not self.anthropic_client:
             raise Exception("Anthropic 클라이언트가 초기화되지 않았습니다.")
         
@@ -341,103 +376,35 @@ class IntegratedAnalyzer:
     
     def _generate_fallback_html(self, question: str, query_results: List[Dict]) -> str:
         """폴백 HTML 생성"""
-        # 간단한 폴백 HTML 템플릿
         return f"""<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{question} - 분석 결과</title>
-    <style>
-        body {{ font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
-        .container {{ max-width: 800px; margin: 0 auto; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
-        .header {{ text-align: center; margin-bottom: 30px; color: #333; }}
-        .data-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        .data-table th {{ background: #4285f4; color: white; padding: 12px; text-align: left; }}
-        .data-table td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
-        .summary {{ background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>📊 {question}</h1>
-            <p>BigQuery 분석 결과 • {len(query_results)}개 결과</p>
-        </div>
-        <div class="summary">
-            <h3>📋 기본 분석 리포트</h3>
-            <p>총 {len(query_results)}개의 레코드가 조회되었습니다.</p>
-        </div>
-    </div>
-</body>
-</html>"""
-    
-    def execute_bigquery(self, sql_query: str) -> Dict:
-        """BigQuery에서 SQL 쿼리 실행"""
-        try:
-            logger.info(f"실행할 SQL: {sql_query}")
-            
-            query_job = self.bigquery_client.query(sql_query)
-            results = query_job.result()
-            
-            rows = []
-            for row in results:
-                row_dict = {}
-                try:
-                    if hasattr(row, 'keys') and hasattr(row, 'values'):
-                        for key, value in zip(row.keys(), row.values()):
-                            if isinstance(value, datetime.datetime):
-                                row_dict[key] = value.isoformat()
-                            elif hasattr(value, 'isoformat'):
-                                row_dict[key] = value.isoformat()
-                            else:
-                                row_dict[key] = value
-                    else:
-                        row_dict = dict(row)
-                        for key, value in row_dict.items():
-                            if isinstance(value, datetime.datetime):
-                                row_dict[key] = value.isoformat()
-                            elif hasattr(value, 'isoformat'):
-                                row_dict[key] = value.isoformat()
-                except Exception as e:
-                    logger.error(f"Row 변환 중 오류: {e}")
-                    row_dict = {"error": f"Row 변환 실패: {str(e)}"}
-                
-                rows.append(row_dict)
-            
-            return {
-                "success": True,
-                "data": rows,
-                "row_count": len(rows)
-            }
-            
-        except Exception as e:
-            logger.error(f"BigQuery 실행 중 오류: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "data": []
-            }
-    
-    def _build_schema_prompt(self, metadata: Dict) -> str:
-        """메타데이터를 기반으로 스키마 프롬프트 생성"""
-        schema_parts = [f"프로젝트 ID: {metadata['project_id']}\n"]
-        
-        for table_id, table_info in metadata["tables"].items():
-            if "error" in table_info:
-                continue
-                
-            schema_parts.append(f"테이블: `{table_id}`")
-            schema_parts.append(f"- 총 행 개수: {table_info['num_rows']:,}")
-            schema_parts.append("- 스키마:")
-            
-            for field in table_info["schema"]:
-                desc = field["description"] or "설명 없음"
-                schema_parts.append(f"  - `{field['name']}` ({field['type']}) - {desc}")
-            
-            schema_parts.append("")
-        
-        return "\n".join(schema_parts)
+                    <html lang="ko">
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>{question} - 분석 결과</title>
+                        <style>
+                            body {{ font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
+                            .container {{ max-width: 800px; margin: 0 auto; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
+                            .header {{ text-align: center; margin-bottom: 30px; color: #333; }}
+                            .data-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+                            .data-table th {{ background: #4285f4; color: white; padding: 12px; text-align: left; }}
+                            .data-table td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
+                            .summary {{ background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <div class="header">
+                                <h1>📊 {question}</h1>
+                                <p>BigQuery 분석 결과 • {len(query_results)}개 결과</p>
+                            </div>
+                            <div class="summary">
+                                <h3>📋 기본 분석 리포트</h3>
+                                <p>총 {len(query_results)}개의 레코드가 조회되었습니다.</p>
+                            </div>
+                        </div>
+                    </body>
+                    </html>"""
 
 # 통합 분석기 인스턴스 생성
 integrated_analyzer = IntegratedAnalyzer(anthropic_client, bigquery_client) if (anthropic_client and bigquery_client) else None
@@ -456,7 +423,7 @@ def static_files(filename):
 
 @app.route('/profiling')
 def run_profiling():
-    """메타데이터 프로파일링 (실시간 스트리밍 - 강화 버전)"""
+    """메타데이터 프로파일링 (실시간 스트리밍)"""
     if not integrated_analyzer:
         def error_generator():
             yield f"data: {json.dumps({'type': 'error', 'payload': {'message': '분석 엔진이 초기화되지 않았습니다.'}}, ensure_ascii=False)}\n\n"
@@ -497,6 +464,9 @@ def run_profiling():
             yield f"data: {json.dumps({'type': 'log', 'payload': {'message': f'대상 테이블 {len(validated_table_ids)}개 분석 시작'}}, ensure_ascii=False)}\n\n"
             
             metadata = integrated_analyzer.metadata_extractor.extract_metadata(project_id, validated_table_ids)
+            
+            # 스키마 정보 등록
+            register_extracted_metadata(project_id, metadata)
             
             yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 1, 'message': '메타데이터 추출 완료'}}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'metadata', 'payload': safe_json_serialize(metadata)}, ensure_ascii=False)}\n\n"
@@ -604,7 +574,7 @@ def run_profiling():
 
 @app.route('/quick', methods=['POST'])
 def quick_query():
-    """빠른 조회 - 데이터만 반환 (강화 버전)"""
+    """빠른 조회 - 데이터만 반환"""
     try:
         if not integrated_analyzer:
             return jsonify({
@@ -675,7 +645,7 @@ def quick_query():
 
 @app.route('/analyze', methods=['POST'])
 def structured_analysis():
-    """구조화된 분석 - 차트와 분석 리포트 포함 (완전 구현)"""
+    """구조화된 분석 - 차트와 분석 리포트 포함"""
     try:
         if not integrated_analyzer:
             return jsonify({
@@ -758,7 +728,7 @@ def structured_analysis():
 
 @app.route('/creative-html', methods=['POST'])
 def creative_html_analysis():
-    """창의적 HTML 분석 - Claude가 완전한 HTML 생성 (완전 구현)"""
+    """창의적 HTML 분석 - Claude가 완전한 HTML 생성"""
     try:
         if not integrated_analyzer:
             return jsonify({
