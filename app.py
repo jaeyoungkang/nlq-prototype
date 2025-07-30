@@ -178,11 +178,53 @@ class IntegratedAnalyzer:
             )
             
             sql_query = response.content[0].text.strip()
+            
+            # SQL 쿼리에서 마크다운 코드 블록 제거
+            sql_query = self._clean_sql_query(sql_query)
+            
             logger.info(f"생성된 SQL: {sql_query}")
             return sql_query
             
         except Exception as e:
             raise Exception(f"Claude API 호출 중 오류 발생: {str(e)}")
+    
+    def _clean_sql_query(self, sql_query: str) -> str:
+        """SQL 쿼리에서 마크다운 형식 제거 및 정리"""
+        # 마크다운 코드 블록 제거
+        if '```sql' in sql_query:
+            # ```sql과 ```를 제거
+            sql_query = sql_query.split('```sql')[1] if '```sql' in sql_query else sql_query
+            sql_query = sql_query.split('```')[0] if '```' in sql_query else sql_query
+        elif '```' in sql_query:
+            # 일반 코드 블록 제거
+            parts = sql_query.split('```')
+            if len(parts) >= 3:
+                sql_query = parts[1]  # 코드 블록 내용만 추출
+        
+        # 앞뒤 공백 제거
+        sql_query = sql_query.strip()
+        
+        # 주석이나 설명 제거 (-- 로 시작하는 라인들 중 SQL 키워드가 없는 것들)
+        lines = sql_query.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # SQL 주석이지만 실제 SQL 구문이 포함된 경우는 유지
+            if line.startswith('--') and not any(keyword in line.upper() for keyword in ['SELECT', 'FROM', 'WHERE', 'GROUP', 'ORDER', 'LIMIT']):
+                continue
+            cleaned_lines.append(line)
+        
+        # 정리된 라인들을 다시 조합
+        sql_query = '\n'.join(cleaned_lines)
+        
+        # 세미콜론이 없으면 추가
+        if not sql_query.rstrip().endswith(';'):
+            sql_query = sql_query.rstrip() + ';'
+        
+        return sql_query
     
     def execute_bigquery(self, sql_query: str) -> Dict:
         """BigQuery에서 SQL 쿼리 실행"""
@@ -217,16 +259,44 @@ class IntegratedAnalyzer:
                 
                 rows.append(row_dict)
             
+            # 안전한 job_stats 생성 (속성이 없을 경우 None 처리)
+            job_stats = {}
+            try:
+                job_stats["bytes_processed"] = getattr(query_job, 'total_bytes_processed', None)
+                job_stats["bytes_billed"] = getattr(query_job, 'total_bytes_billed', None)
+                
+                # creation_time 속성 안전하게 처리
+                creation_time = getattr(query_job, 'creation_time', None) or getattr(query_job, 'created', None)
+                if creation_time and hasattr(creation_time, 'isoformat'):
+                    job_stats["creation_time"] = creation_time.isoformat()
+                else:
+                    job_stats["creation_time"] = None
+                
+                # end_time 속성 안전하게 처리  
+                end_time = getattr(query_job, 'end_time', None) or getattr(query_job, 'ended', None)
+                if end_time and hasattr(end_time, 'isoformat'):
+                    job_stats["end_time"] = end_time.isoformat()
+                else:
+                    job_stats["end_time"] = None
+                    
+                # job_id 추가
+                job_stats["job_id"] = getattr(query_job, 'job_id', None)
+                
+            except Exception as e:
+                logger.warning(f"Job stats 수집 중 오류 (무시됨): {e}")
+                job_stats = {
+                    "bytes_processed": None,
+                    "bytes_billed": None,
+                    "creation_time": None,
+                    "end_time": None,
+                    "job_id": None
+                }
+            
             return {
                 "success": True,
                 "data": rows,
                 "row_count": len(rows),
-                "job_stats": {
-                    "bytes_processed": query_job.total_bytes_processed,
-                    "bytes_billed": query_job.total_bytes_billed,
-                    "creation_time": query_job.creation_time.isoformat() if query_job.creation_time else None,
-                    "end_time": query_job.end_time.isoformat() if query_job.end_time else None
-                }
+                "job_stats": job_stats
             }
             
         except Exception as e:
@@ -377,34 +447,34 @@ class IntegratedAnalyzer:
     def _generate_fallback_html(self, question: str, query_results: List[Dict]) -> str:
         """폴백 HTML 생성"""
         return f"""<!DOCTYPE html>
-                    <html lang="ko">
-                    <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>{question} - 분석 결과</title>
-                        <style>
-                            body {{ font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
-                            .container {{ max-width: 800px; margin: 0 auto; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
-                            .header {{ text-align: center; margin-bottom: 30px; color: #333; }}
-                            .data-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-                            .data-table th {{ background: #4285f4; color: white; padding: 12px; text-align: left; }}
-                            .data-table td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
-                            .summary {{ background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; }}
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            <div class="header">
-                                <h1>📊 {question}</h1>
-                                <p>BigQuery 분석 결과 • {len(query_results)}개 결과</p>
-                            </div>
-                            <div class="summary">
-                                <h3>📋 기본 분석 리포트</h3>
-                                <p>총 {len(query_results)}개의 레코드가 조회되었습니다.</p>
-                            </div>
-                        </div>
-                    </body>
-                    </html>"""
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{question} - 분석 결과</title>
+    <style>
+        body {{ font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
+        .container {{ max-width: 800px; margin: 0 auto; background: white; border-radius: 12px; padding: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }}
+        .header {{ text-align: center; margin-bottom: 30px; color: #333; }}
+        .data-table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
+        .data-table th {{ background: #4285f4; color: white; padding: 12px; text-align: left; }}
+        .data-table td {{ padding: 10px; border-bottom: 1px solid #ddd; }}
+        .summary {{ background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 {question}</h1>
+            <p>BigQuery 분석 결과 • {len(query_results)}개 결과</p>
+        </div>
+        <div class="summary">
+            <h3>📋 기본 분석 리포트</h3>
+            <p>총 {len(query_results)}개의 레코드가 조회되었습니다.</p>
+        </div>
+    </div>
+</body>
+</html>"""
 
 # 통합 분석기 인스턴스 생성
 integrated_analyzer = IntegratedAnalyzer(anthropic_client, bigquery_client) if (anthropic_client and bigquery_client) else None
