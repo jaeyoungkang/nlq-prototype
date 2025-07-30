@@ -9,22 +9,22 @@
             <h1 class="text-3xl font-bold text-gray-900">프로파일</h1>
             <p class="text-gray-600 mt-2">과거에 실행된 프로파일링 작업 목록입니다. 각 항목을 클릭하여 상세 리포트를 확인하세요.</p>
         </div>
-        <button id="refreshButton" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-800 font-medium py-2 px-4 rounded-lg text-sm transition-colors">
+        <button id="refreshButton" class="btn btn-secondary">
             새로고침
         </button>
     </header>
 
-    <main class="bg-white rounded-lg shadow-md">
+    <main class="card">
         <div class="overflow-x-auto">
-            <table class="w-full text-sm text-left text-gray-500">
-                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+            <table class="data-table">
+                <thead>
                     <tr>
-                        <th scope="col" class="px-6 py-3">프로젝트 ID</th>
-                        <th scope="col" class="px-6 py-3">테이블 수</th>
-                        <th scope="col" class="px-6 py-3">상태</th>
-                        <th scope="col" class="px-6 py-3">시작 시간</th>
-                        <th scope="col" class="px-6 py-3">소요 시간</th>
-                        <th scope="col" class="px-6 py-3 text-right">작업</th>
+                        <th scope="col">프로젝트 ID</th>
+                        <th scope="col">테이블 수</th>
+                        <th scope="col">상태</th>
+                        <th scope="col">시작 시간</th>
+                        <th scope="col">소요 시간</th>
+                        <th scope="col" class="text-right">작업</th>
                     </tr>
                 </thead>
                 <tbody id="logs-table-body">
@@ -103,16 +103,16 @@
 
         logs.forEach(log => {
             const mainRow = document.createElement('tr');
-            mainRow.className = 'bg-white border-b hover:bg-gray-50 log-item';
+            mainRow.className = 'log-item cursor-pointer hover:bg-gray-50';
             mainRow.dataset.sessionId = log.id;
             mainRow.dataset.detailsLoaded = 'false';
 
-            const statusColors = {
-                '완료': 'bg-green-100 text-green-800',
-                '실패': 'bg-red-100 text-red-800',
-                '진행 중': 'bg-yellow-100 text-yellow-800'
+            const statusMapping = {
+                '완료': { class: 'badge-success', label: '완료' },
+                '실패': { class: 'badge-error', label: '실패' },
+                '진행 중': { class: 'badge-warning', label: '진행 중' }
             };
-            const statusColor = statusColors[log.status] || 'bg-gray-100 text-gray-800';
+            const statusInfo = statusMapping[log.status] || { class: 'badge-gray', label: log.status };
 
             const startTime = new Date(log.start_time);
             const endTime = log.end_time ? new Date(log.end_time) : null;
@@ -139,15 +139,15 @@
             }
 
             mainRow.innerHTML = `
-                <td class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap cursor-pointer">${log.project_id}</td>
-                <td class="px-6 py-4 cursor-pointer">${log.table_ids ? log.table_ids.length : 0}</td>
-                <td class="px-6 py-4 cursor-pointer">
-                    <span class="px-2 py-1 text-xs font-medium rounded-full ${statusColor}">${log.status}</span>
+                <td class="font-medium text-gray-900 whitespace-nowrap">${log.project_id}</td>
+                <td>${log.table_ids ? log.table_ids.length : 0}</td>
+                <td>
+                    <span class="badge ${statusInfo.class}">${statusInfo.label}</span>
                 </td>
-                <td class="px-6 py-4 cursor-pointer">${startTime.toLocaleString('ko-KR')}</td>
-                <td class="px-6 py-4 cursor-pointer">${duration}</td>
-                <td class="px-6 py-4 text-right">
-                    <button class="select-profile-btn text-sm font-medium text-blue-600 hover:text-blue-800 disabled:text-gray-400 disabled:cursor-not-allowed" 
+                <td>${startTime.toLocaleString('ko-KR')}</td>
+                <td>${duration}</td>
+                <td class="text-right">
+                    <button class="select-profile-btn btn btn-secondary text-xs py-1 px-3 ${isCurrentlySelected || !isSelectable ? 'opacity-50 cursor-not-allowed' : ''}" 
                             data-session-id="${log.id}" 
                             data-project-id="${log.project_id}" 
                             data-table-ids='${JSON.stringify(log.table_ids || [])}'
@@ -177,6 +177,7 @@
             return;
         }
 
+        // 다른 모든 상세 내용 닫기
         document.querySelectorAll('.log-details').forEach(row => row.classList.add('hidden'));
         document.querySelectorAll('.log-item').forEach(row => row.classList.remove('bg-indigo-50'));
         
@@ -240,24 +241,29 @@
         
         elements.tableBody.addEventListener('click', (event) => {
             const selectBtn = event.target.closest('.select-profile-btn');
-            if (selectBtn) {
+            if (selectBtn && !selectBtn.disabled) {
                 event.stopPropagation();
                 const profile = {
                     id: selectBtn.dataset.sessionId,
-                    projectId: selectBtn.dataset.projectId,
+                    projectId: selectBtn.dataset.projectId,  
                     tableIds: JSON.parse(selectBtn.dataset.tableIds)
                 };
                 localStorage.setItem('selectedProfile', JSON.stringify(profile));
                 window.dispatchEvent(new Event('contextChanged'));
                 
+                // 모든 버튼 상태 업데이트
                 document.querySelectorAll('.select-profile-btn').forEach(btn => {
-                    if (!btn.title) { // Only re-enable buttons that are selectable
+                    if (!btn.title && !btn.disabled) { // 선택 가능한 버튼들만
                         btn.textContent = '선택';
                         btn.disabled = false;
+                        btn.classList.remove('opacity-50', 'cursor-not-allowed');
                     }
                 });
+                
+                // 선택된 버튼 상태 업데이트
                 selectBtn.textContent = '선택됨';
                 selectBtn.disabled = true;
+                selectBtn.classList.add('opacity-50', 'cursor-not-allowed');
                 return;
             }
 

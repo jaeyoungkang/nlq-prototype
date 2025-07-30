@@ -9,39 +9,40 @@
         <p class="text-gray-600 mt-2">분석할 GCP 프로젝트와 BigQuery 테이블을 선택하세요.</p>
     </header>
 
-    <main class="bg-white p-8 rounded-lg shadow-md space-y-6">
-        <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">
-                GCP Project
-                <button id="refreshProjectsButton" class="ml-2 text-xs text-blue-600 hover:text-blue-700" onclick="loadGcpProjects()">
-                    🔄 새로고침
-                </button>
-            </label>
-            <select id="gcpProjectId" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">프로젝트를 선택하세요...</option>
-            </select>
-        </div>
-        <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">
-                BigQuery Tables
-            </label>
-            <div id="tablesContainer" class="border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
-                <div id="tablesPlaceholder" class="p-3 text-sm text-gray-500 text-center">
-                    먼저 프로젝트를 선택하세요
-                </div>
-                <div id="tablesList" class="hidden"></div>
+    <main class="card">
+        <div class="space-y-6">
+            <div>
+                <label class="form-label">
+                    GCP Project
+                    <button id="refreshProjectsButton" class="ml-2 text-xs text-blue-600 hover:text-blue-700" onclick="loadGcpProjects()">
+                        🔄 새로고침
+                    </button>
+                </label>
+                <select id="gcpProjectId" class="form-select">
+                    <option value="">프로젝트를 선택하세요...</option>
+                </select>
             </div>
-            <div class="mt-2 flex justify-between items-center text-xs text-gray-500">
-                <span id="tableSelectionStatus">선택된 테이블: 0개</span>
-                <button id="selectAllTablesButton" class="text-blue-600 hover:text-blue-700 disabled:text-gray-400" onclick="toggleAllTables()" disabled>
-                    전체 선택/해제
-                </button>
+            
+            <div>
+                <label class="form-label">BigQuery Tables</label>
+                <div id="tablesContainer" class="border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
+                    <div id="tablesPlaceholder" class="p-3 text-sm text-gray-500 text-center">
+                        먼저 프로젝트를 선택하세요
+                    </div>
+                    <div id="tablesList" class="hidden"></div>
+                </div>
+                <div class="mt-2 flex justify-between items-center text-xs text-gray-500">
+                    <span id="tableSelectionStatus">선택된 테이블: 0개</span>
+                    <button id="selectAllTablesButton" class="text-blue-600 hover:text-blue-700 disabled:text-gray-400" onclick="toggleAllTables()" disabled>
+                        전체 선택/해제
+                    </button>
+                </div>
             </div>
         </div>
     </main>
 
     <footer class="mt-8 flex justify-end items-center">
-        <button id="saveSettingsButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition-colors disabled:bg-gray-400" disabled>
+        <button id="saveSettingsButton" class="btn btn-primary" disabled>
             설정 저장
         </button>
     </footer>
@@ -98,6 +99,9 @@
         setTimeout(() => { elements.saveStatus.textContent = ''; }, 3000);
         validateInputs();
         updateSelectedTablesNav();
+        
+        // 컨텍스트 변경 이벤트 발생
+        window.dispatchEvent(new Event('contextChanged'));
     }
     
     function loadSavedSettings() {
@@ -187,7 +191,7 @@
                 html += `
                     <div class="px-3 py-2 hover:bg-gray-50 border-t border-gray-50">
                         <label class="flex items-center cursor-pointer text-sm">
-                            <input type="checkbox" class="mr-3 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" data-table-id="${table.table_id}" ${isSelected ? 'checked' : ''} onchange="toggleTableSelection('${table.table_id}')">
+                            <input type="checkbox" class="mr-3 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 table-checkbox" data-table-id="${table.table_id}" ${isSelected ? 'checked' : ''} onchange="toggleTableSelection('${table.table_id}')">
                             <span class="font-medium text-gray-800">${table.table_name}</span>
                         </label>
                     </div>`;
@@ -210,7 +214,12 @@
         const allSelected = selectedTables.size === projectTables.length;
         selectedTables.clear();
         if (!allSelected) projectTables.forEach(table => selectedTables.add(table.table_id));
-        document.querySelectorAll('.table-checkbox').forEach(cb => cb.checked = !allSelected);
+        
+        // 체크박스 상태 업데이트
+        document.querySelectorAll('.table-checkbox').forEach(cb => {
+            cb.checked = !allSelected;
+        });
+        
         updateTableSelectionStatus();
     }
 
@@ -236,15 +245,24 @@
         elements.saveSettingsButton.disabled = !(projectId && hasSelectedTables);
     }
     
+    // 이벤트 리스너
     elements.gcpProjectId.addEventListener('change', () => {
         selectedTables.clear();
         loadProjectTables();
     });
+    
     elements.saveSettingsButton.addEventListener('click', saveSettings);
 
-    document.addEventListener('DOMContentLoaded', () => {
+    // 초기화
+    function initializePage() {
         loadGcpProjects();
         validateInputs();
-    });
+    }
+
+    if (window.gcpAuthCompleted) {
+        initializePage();
+    } else {
+        window.addEventListener('authComplete', initializePage, { once: true });
+    }
 </script>
 {% endblock %}

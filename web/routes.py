@@ -1,9 +1,10 @@
 # web/routes.py
 """
-웹 페이지 라우트 - HTML 템플릿 렌더링
+웹 페이지 라우트 - HTML 템플릿 렌더링 및 정적 파일 서빙
 """
 
-from flask import Blueprint, render_template, send_from_directory
+import os
+from flask import Blueprint, render_template, send_from_directory, current_app
 
 # Blueprint 생성
 web_bp = Blueprint('web', __name__)
@@ -33,7 +34,22 @@ def profiling_history_page():
     return render_template('profiling.html')
 
 
-@web_bp.route('/<path:filename>')
+@web_bp.route('/static/<path:filename>')
 def static_files(filename):
-    """정적 파일 서빙"""
+    """정적 파일 서빙 (CSS, JS, 이미지 등)"""
+    # 프로젝트 루트 디렉토리에서 static 폴더 찾기
+    static_folder = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static')
+    return send_from_directory(static_folder, filename)
+
+
+@web_bp.route('/<path:filename>')
+def other_static_files(filename):
+    """기타 정적 파일 서빙 (하위 호환성)"""
+    # CSS 파일인 경우 static 디렉토리에서 찾기
+    if filename.endswith('.css'):
+        static_folder = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static')
+        if os.path.exists(os.path.join(static_folder, filename)):
+            return send_from_directory(static_folder, filename)
+    
+    # 기존 방식 (프로젝트 루트에서 직접 서빙)
     return send_from_directory('.', filename)
