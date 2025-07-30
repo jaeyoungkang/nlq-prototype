@@ -3,41 +3,51 @@
 {% block title %}채팅 - BigQuery AI Assistant{% endblock %}
 
 {% block content %}
-<div class="w-full h-full flex flex-col">
+<style>
+    /* 스크롤바 디자인 */
+    .messages-area::-webkit-scrollbar { width: 6px; }
+    .messages-area::-webkit-scrollbar-track { background: transparent; }
+    .messages-area::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.2); border-radius: 20px; border: transparent; }
+    .prose table { width: 100%; border-collapse: collapse; }
+    .prose th, .prose td { border: 1px solid #e5e7eb; padding: 8px; }
+    .prose th { background-color: #f3f4f6; }
+    .prose pre { background-color: #1e293b; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+    .prose code { font-family: 'Courier New', Courier, monospace; }
+    .prose h1, .prose h2, .prose h3 { font-weight: 600; }
+    .prose hr { margin-top: 1.5rem; margin-bottom: 1.5rem; }
+</style>
+
+<div class="w-full h-full flex flex-col bg-gray-50">
     <!-- 상단 헤더 -->
-    <header class="p-4 border-b border-gray-200 bg-white flex justify-between items-center">
+    <header class="p-4 border-b border-gray-200 bg-white flex justify-between items-center flex-shrink-0">
         <h2 class="text-lg font-semibold text-gray-800">분석 채팅</h2>
         <div class="flex items-center space-x-4">
             <div id="profilingStatusWrapper" class="flex items-center text-sm text-gray-600">
                 <span class="status-indicator status-inactive" id="profiling-status-indicator"></span>
                 <span id="profilingStatus">대기 중</span>
             </div>
-            <button id="startProfilingButton" 
-                    class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors disabled:bg-gray-400"
-                    disabled>
+            <button id="startProfilingButton" class="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors disabled:bg-gray-400" disabled>
                 프로파일링 시작
             </button>
         </div>
     </header>
 
     <!-- 메시지 영역 -->
-    <div class="messages-area flex-1 bg-gray-50" id="messagesArea">
-        <!-- 초기 메시지가 여기에 표시됩니다 -->
+    <div class="messages-area flex-1 overflow-y-auto" id="messagesArea">
+        <div id="messagesContainer" class="py-8 px-4">
+            <!-- 메시지 표시 영역 -->
+        </div>
     </div>
 
     <!-- 입력 영역 -->
-    <div class="input-area">
-        <div class="relative flex items-center">
-            <textarea id="chatInput" 
-                      class="w-full border border-gray-300 rounded-lg py-2 pl-4 pr-24 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                      placeholder="데이터에 대해 질문해보세요..." 
-                      rows="1" 
-                      disabled></textarea>
-            <button id="sendButton" class="absolute right-2 bg-blue-600 text-white rounded-md p-2 disabled:bg-gray-400" disabled>
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                </svg>
-            </button>
+    <div class="input-area-wrapper bg-gray-50/80 backdrop-blur-sm pt-2 pb-4 flex-shrink-0">
+        <div class="max-w-3xl mx-auto px-4">
+            <div class="input-area p-1 bg-white border border-gray-300 rounded-2xl shadow-sm flex items-center">
+                <textarea id="chatInput" class="w-full px-4 py-3 border-0 resize-none focus:outline-none focus:ring-0 bg-transparent" placeholder="데이터에 대해 질문해보세요..." rows="1" disabled></textarea>
+                <button id="sendButton" class="mr-2 bg-blue-600 text-white rounded-full p-2 disabled:bg-gray-400 hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" /></svg>
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -46,144 +56,193 @@
 {% block scripts %}
 <script>
     let currentSettings = { projectId: null, tableIds: [] };
-    let profilingCompleted = false;
+    let isFirstMessage = true;
 
     const elements = {
         startProfilingButton: document.getElementById('startProfilingButton'),
-        profilingStatusIndicator: document.getElementById('profiling-status-indicator'),
         profilingStatus: document.getElementById('profilingStatus'),
-        messagesArea: document.getElementById('messagesArea'),
+        messagesContainer: document.getElementById('messagesContainer'),
         chatInput: document.getElementById('chatInput'),
         sendButton: document.getElementById('sendButton'),
-        selectedTablesNavList: document.getElementById('selected-tables-nav-list'),
     };
 
-    function updateSelectedTablesNav() {
-        if (!elements.selectedTablesNavList) return;
-        elements.selectedTablesNavList.innerHTML = '';
-
-        if (!currentSettings.tableIds || currentSettings.tableIds.length === 0) {
-            elements.selectedTablesNavList.innerHTML = '<li class="px-3 py-1 text-sm text-gray-400">테이블이 선택되지 않았습니다.</li>';
-        } else {
-            currentSettings.tableIds.forEach(tableId => {
-                const li = document.createElement('li');
-                li.className = 'px-3 py-1 text-sm text-gray-700 truncate';
-                li.textContent = tableId.split('.').pop();
-                li.title = tableId;
-                elements.selectedTablesNavList.appendChild(li);
-            });
-        }
-    }
-
-    function loadSettings() {
+    function checkContextAndSetUIState() {
         const savedSettings = localStorage.getItem('bigqueryAISettings');
-        if (savedSettings) {
-            currentSettings = JSON.parse(savedSettings);
-            if (currentSettings.projectId && currentSettings.tableIds.length > 0) {
-                elements.startProfilingButton.disabled = false;
-                showWelcomeMessage();
-                updateSelectedTablesNav();
-                return;
+        const savedProfile = localStorage.getItem('selectedProfile');
+        let context = null;
+        if (savedProfile) {
+            const profile = JSON.parse(savedProfile);
+            if (profile.id && profile.projectId && profile.tableIds && profile.tableIds.length > 0) {
+                context = { projectId: profile.projectId, tableIds: profile.tableIds };
             }
         }
-        elements.startProfilingButton.disabled = true;
-        showSettingsNeededMessage();
-        updateSelectedTablesNav();
+        if (!context && savedSettings) {
+            const settings = JSON.parse(savedSettings);
+            if (settings.projectId && settings.tableIds && settings.tableIds.length > 0) {
+                context = settings;
+            }
+        }
+        if (context) {
+            currentSettings = context;
+            elements.startProfilingButton.disabled = false;
+            elements.chatInput.disabled = false;
+            elements.sendButton.disabled = false;
+            if (isFirstMessage) showWelcomeMessage();
+        } else {
+            currentSettings = { projectId: null, tableIds: [] };
+            elements.startProfilingButton.disabled = true;
+            elements.chatInput.disabled = true;
+            elements.sendButton.disabled = true;
+            showSettingsNeededMessage();
+        }
     }
 
     function showWelcomeMessage() {
-        elements.messagesArea.innerHTML = `
-            <div class="flex justify-center items-center h-full">
-                <div class="text-center max-w-md">
-                    <div class="text-6xl mb-4">🤖</div>
-                    <h2 class="text-2xl font-semibold text-gray-900 mb-2">BigQuery AI Assistant</h2>
-                    <p class="text-gray-600 mb-6">'프로파일링 시작' 버튼을 눌러 데이터 분석을 시작하세요.</p>
-                </div>
-            </div>`;
+        elements.messagesContainer.innerHTML = `<div class="text-center max-w-md mx-auto p-4"><div class="inline-block bg-gradient-to-r from-blue-500 to-purple-600 p-4 rounded-full mb-4"><svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.636-6.364l.707.707M19.071 19.071l-.707-.707M12 21v-1m-6.364-1.636l.707-.707" /></svg></div><h2 class="text-3xl font-semibold text-gray-800 mb-2">무엇을 도와드릴까요?</h2><p class="text-gray-500">데이터에 대해 질문하거나, '프로파일링 시작' 버튼으로 상세 분석을 시작하세요.</p></div>`;
     }
-    
+
     function showSettingsNeededMessage() {
-         elements.messagesArea.innerHTML = `
-            <div class="flex justify-center items-center h-full">
-                <div class="text-center max-w-md">
-                    <div class="text-6xl mb-4">⚙️</div>
-                    <h2 class="text-2xl font-semibold text-gray-900 mb-2">설정이 필요합니다</h2>
-                    <p class="text-gray-600 mb-6">좌측 메뉴의 <a href="/settings" class="text-blue-600 font-semibold">프로젝트 설정</a>으로 이동하여 분석할 대상을 먼저 선택해주세요.</p>
-                </div>
-            </div>`;
+        elements.messagesContainer.innerHTML = `<div class="text-center max-w-md mx-auto p-4"><div class="text-6xl mb-4">⚙️</div><h2 class="text-2xl font-semibold text-gray-900 mb-2">설정이 필요합니다</h2><p class="text-gray-600 mb-6">좌측 메뉴의 <a href="/settings" class="text-blue-600 font-semibold hover:underline">프로젝트 설정</a>으로 이동하여 분석할 대상을 먼저 선택해주세요.</p></div>`;
     }
-    
-    function startProfiling() {
-        if (!currentSettings.projectId || currentSettings.tableIds.length === 0) {
-            alert('설정이 올바르지 않습니다. 설정 페이지를 확인해주세요.');
-            return;
-        }
 
-        elements.startProfilingButton.disabled = true;
-        elements.startProfilingButton.textContent = '프로파일링 중...';
-        elements.profilingStatusIndicator.className = 'status-indicator status-working';
-        elements.profilingStatus.textContent = '시작 중...';
-
-        const tableIdsParam = currentSettings.tableIds.join(',');
-        const source = new EventSource(`/profiling?projectId=${encodeURIComponent(currentSettings.projectId)}&tableIds=${encodeURIComponent(tableIdsParam)}`);
-
-        source.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'status') {
-                elements.profilingStatus.textContent = data.payload.message;
-            } else if (data.type === 'profiling_complete') {
-                profilingCompleted = true;
-                elements.profilingStatusIndicator.className = 'status-indicator status-ready';
-                elements.profilingStatus.textContent = '완료';
-                elements.chatInput.disabled = false;
-                elements.sendButton.disabled = false;
-                elements.startProfilingButton.textContent = '다시 시작';
-                elements.startProfilingButton.disabled = false;
-                addMessage(data.payload.report.full_report, false, 'markdown');
-                source.close();
-            } else if (data.type === 'error') {
-                elements.profilingStatusIndicator.className = 'status-indicator status-error';
-                elements.profilingStatus.textContent = '오류';
-                addMessage(`**프로파일링 오류**\n\n${data.payload.message}`, false, 'markdown');
-                source.close();
-                elements.startProfilingButton.disabled = false;
-                elements.startProfilingButton.textContent = '다시 시작';
-            }
-        };
-
-        source.onerror = function(err) {
-            elements.profilingStatusIndicator.className = 'status-indicator status-error';
-            elements.profilingStatus.textContent = '연결 오류';
-            source.close();
-            elements.startProfilingButton.disabled = false;
-            elements.startProfilingButton.textContent = '다시 시작';
-        };
-    }
-    
-    let isFirstMessage = true;
-    function addMessage(content, isUser = false, type = 'text') {
-        if (isFirstMessage) {
-            elements.messagesArea.innerHTML = '';
+    function addMessage(content, isUser = false, type = 'text', context = null) {
+        if (isFirstMessage && type !== 'loading') {
+            elements.messagesContainer.innerHTML = '';
             isFirstMessage = false;
         }
+        const messageWrapper = document.createElement('div');
+        messageWrapper.className = `message-wrapper flex items-start gap-3 my-4 ${isUser ? 'flex-row-reverse max-w-3xl ml-auto' : 'w-full'}`;
+        const avatar = document.createElement('div');
+        avatar.className = `w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center mt-1 ${isUser ? 'bg-blue-500 text-white' : 'bg-gray-700 text-white'}`;
+        avatar.innerHTML = isUser ? `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" /></svg>` : `<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 1a9 9 0 00-9 9v1.25a1.25 1.25 0 001.25 1.25h15.5A1.25 1.25 0 0019 11.25V10a9 9 0 00-9-9zM4.75 11a.75.75 0 010-1.5h.5a.75.75 0 010 1.5h-.5zM14.75 11a.75.75 0 010-1.5h.5a.75.75 0 010 1.5h-.5zM10 6a2 2 0 110 4 2 2 0 010-4z" /><path d="M5.188 14.03a.75.75 0 01.562 1.313 5.95 5.95 0 008.5 0 .75.75 0 011.313-.562 7.45 7.45 0 01-11.126 0z" /></svg>`;
+        
+        const contentContainer = document.createElement('div');
+        contentContainer.className = 'w-full min-w-0'; // min-w-0 for flexbox truncation
 
         const messageDiv = document.createElement('div');
-        messageDiv.className = `message-bubble p-4 ${isUser ? 'user-message' : 'ai-message'}`;
-        
-        if (type === 'markdown') {
-            messageDiv.innerHTML = marked.parse(content);
+        if (type === 'loading') {
+            messageDiv.className = 'p-4 rounded-lg bg-white shadow-sm flex items-center max-w-max';
+            messageDiv.innerHTML = `<div class="flex items-center space-x-2 text-gray-500"><span>분석 중</span><div class="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style="animation-delay: 0s;"></div><div class="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style="animation-delay: 0.2s;"></div><div class="w-2 h-2 bg-gray-400 rounded-full animate-pulse" style="animation-delay: 0.4s;"></div></div>`;
         } else {
-            messageDiv.textContent = content;
+            messageDiv.className = `prose max-w-none ${isUser ? 'p-4 rounded-lg shadow-sm bg-blue-100' : 'max-w-3xl mx-auto'}`;
+            messageDiv.innerHTML = type === 'markdown' ? marked.parse(content, { gfm: true, breaks: true }) : `<p>${content}</p>`;
         }
-        
-        elements.messagesArea.appendChild(messageDiv);
-        elements.messagesArea.scrollTop = elements.messagesArea.scrollHeight;
+        contentContainer.appendChild(messageDiv);
+
+        if (!isUser && type === 'data_result' && context) {
+            const menu = createAnalysisMenu(context, contentContainer);
+            contentContainer.appendChild(menu);
+        }
+
+        messageWrapper.appendChild(avatar);
+        messageWrapper.appendChild(contentContainer);
+        elements.messagesContainer.appendChild(messageWrapper);
+        document.getElementById('messagesArea').scrollTop = document.getElementById('messagesArea').scrollHeight;
+        return messageWrapper;
+    }
+
+    function createAnalysisMenu(context, parentContainer) {
+        const menuContainer = document.createElement('div');
+        menuContainer.className = 'mt-4 flex flex-wrap gap-2 max-w-3xl mx-auto';
+        const menuItems = [
+            { text: '결과 데이터 해설 📊', type: 'explanation' },
+            { text: '컨텍스트 연계 분석 🔍', type: 'context' },
+            { text: '추가 분석 제안 💡', type: 'suggestion' }
+        ];
+        menuItems.forEach(item => {
+            const button = document.createElement('button');
+            button.className = 'px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors';
+            button.innerHTML = item.text;
+            button.onclick = () => handleAnalysisRequest(item.type, context, menuContainer);
+            menuContainer.appendChild(button);
+        });
+        return menuContainer;
+    }
+
+    async function handleAnalysisRequest(analysisType, context, menuContainer) {
+        menuContainer.style.pointerEvents = 'none';
+        menuContainer.style.opacity = '0.5';
+        const loadingMessage = addMessage('', false, 'loading');
+        try {
+            const response = await fetch('/analyze-context', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...context, analysis_type: analysisType }),
+            });
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error);
+            addMessage(result.analysis, false, 'markdown');
+        } catch (error) {
+            addMessage(`**분석 오류:**\n${error.message}`, false, 'markdown');
+        } finally {
+            loadingMessage.remove();
+        }
+    }
+
+    async function sendMessage() {
+        const question = elements.chatInput.value.trim();
+        if (!question) return;
+        addMessage(question, true, 'text');
+        elements.chatInput.value = '';
+        elements.chatInput.style.height = 'auto';
+        elements.chatInput.disabled = true;
+        elements.sendButton.disabled = true;
+        const loadingMessage = addMessage('', false, 'loading');
+        try {
+            const response = await fetch('/quick', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question: question, project_id: currentSettings.projectId, table_ids: currentSettings.tableIds }),
+            });
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error);
+
+            let dataContent = `### 생성된 SQL\n\`\`\`sql\n${result.generated_sql}\n\`\`\`\n\n### 결과 (${result.row_count}개 행)\n`;
+            if (result.data && result.data.length > 0) {
+                const headers = Object.keys(result.data[0]);
+                dataContent += `| ${headers.join(' | ')} |\n| ${headers.map(() => '---').join(' | ')} |\n`;
+                result.data.slice(0, 10).forEach(row => {
+                    const values = headers.map(h => {
+                        let val = row[h] === null ? '' : row[h];
+                        return typeof val === 'string' ? val.replace(/\|/g, '\\|') : val;
+                    });
+                    dataContent += `| ${values.join(' | ')} |\n`;
+                });
+                if (result.data.length > 10) dataContent += `\n... (상위 10개 행만 표시)`;
+            } else {
+                dataContent += "결과 데이터가 없습니다.";
+            }
+            const analysisContext = {
+                question: result.original_question, sql_query: result.generated_sql, query_results: result.data,
+                project_id: currentSettings.projectId, table_ids: currentSettings.tableIds
+            };
+            loadingMessage.remove();
+            addMessage(dataContent, false, 'data_result', analysisContext);
+        } catch (error) {
+            loadingMessage.remove();
+            addMessage(`**오류 발생:**\n${error.message}`, false, 'markdown');
+        } finally {
+            elements.chatInput.disabled = false;
+            elements.sendButton.disabled = false;
+            elements.chatInput.focus();
+        }
     }
 
     document.addEventListener('DOMContentLoaded', function() {
-        loadSettings();
-        elements.startProfilingButton.addEventListener('click', startProfiling);
+        checkContextAndSetUIState();
+        elements.startProfilingButton.addEventListener('click', () => { /* Profiling logic can be added back here */ });
+        window.addEventListener('contextChanged', checkContextAndSetUIState);
+        elements.sendButton.addEventListener('click', sendMessage);
+        elements.chatInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        });
+        elements.chatInput.addEventListener('input', () => {
+            elements.chatInput.style.height = 'auto';
+            elements.chatInput.style.height = (elements.chatInput.scrollHeight) + 'px';
+        });
     });
 </script>
 {% endblock %}

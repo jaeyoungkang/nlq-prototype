@@ -21,7 +21,7 @@ from .bigquery_utils import (
     estimate_query_cost,
     validate_sql_syntax,
     format_table_size,
-    generate_sample_queries
+    generate_sample_queries,
 )
 
 __all__ = [

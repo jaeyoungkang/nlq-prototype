@@ -286,7 +286,7 @@ def get_html_generation_prompt(question: str, sql_query: str, query_results: Lis
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{question} - BigQuery 분석 리포트</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"></script>
     <style>
         /* 모든 필요한 CSS 스타일 */
     </style>
@@ -406,72 +406,128 @@ def get_profiling_system_prompt() -> str:
 각 섹션은 독립적으로도 가치 있는 내용을 포함해야 하며, 
 전체적으로는 일관성 있는 분석 스토리를 제공해야 합니다."""
 
-def get_sql_query_generation_prompt(metadata: Dict, business_context: str = "") -> str:
-    """SQL 쿼리 자동 생성을 위한 프롬프트"""
-    return f"""당신은 BigQuery SQL 전문가입니다. 
-제공된 메타데이터와 비즈니스 컨텍스트를 기반으로 실용적이고 최적화된 SQL 쿼리를 생성해주세요.
+def get_sql_generation_system_prompt(project_id: str, table_ids: List[str], metadata: Dict = None) -> str:
+    """동적 스키마 기반 SQL 생성 시스템 프롬프트"""
+    schema_prompt = get_schema_prompt_for_tables(project_id, table_ids)
+    return f"""당신은 BigQuery SQL 전문가이며, 다양한 데이터셋 분석에 특화되어 있습니다. 
+사용자의 자연어 질문을 BigQuery SQL 쿼리로 변환해주세요.
 
-## 메타데이터 정보
-{json.dumps(metadata, indent=2, ensure_ascii=False, default=str)}
+{schema_prompt}
 
-## 비즈니스 컨텍스트
-{business_context}
+## 중요한 규칙:
+- BigQuery 표준 SQL 문법을 사용해주세요
+- 테이블 참조 시 반드시 백틱(`)을 사용하세요: `project.dataset.table`
+- SQL 쿼리만 반환하고, 다른 설명은 포함하지 마세요
+- 쿼리는 반드시 세미콜론(;)으로 끝나야 합니다
+- 대용량 테이블의 경우 LIMIT 절을 사용하여 결과를 제한하세요
+"""
 
-## 생성 요구사항
+def get_specific_contextual_analysis_prompt(question: str, sql_query: str, query_results: List[Dict], project_id: str, table_ids: List[str], analysis_type: str) -> str:
+    """
+    Generates a prompt for a specific type of contextual analysis.
+    analysis_type can be 'explanation', 'context', or 'suggestion'.
+    """
+    schema_prompt = get_schema_prompt_for_tables(project_id, table_ids)
+    sample_data = query_results[:10] if query_results else []
 
-### 1. 쿼리 유형 (5개 생성)
-1. **기본 현황 파악 쿼리**: 데이터의 전반적인 현황과 규모
-2. **데이터 품질 검증 쿼리**: NULL 값, 중복, 이상치 등 품질 확인
-3. **관계 분석 쿼리**: 테이블 간 조인을 활용한 관계 분석
-4. **트렌드 분석 쿼리**: 시간별/카테고리별 트렌드 (가능한 경우)
-5. **핵심 KPI 계산 쿼리**: 비즈니스 관점의 주요 지표
+    missions = {
+        "explanation": {
+            "title": "### 결과 데이터 해설 📊",
+            "instruction": "조회된 데이터가 무엇을 의미하는지 명확하고 간결하게 설명해주세요. 데이터의 주요 패턴이나 주목할 만한 점을 짚어주세요."
+        },
+        "context": {
+            "title": "### 컨텍스트 연계 분석 🔍",
+            "instruction": "이 조회 결과가 전체 데이터셋(다른 테이블 포함) 내에서 어떤 의미를 갖는지 설명해주세요. 현재 결과와 다른 테이블의 데이터를 조합하여 얻을 수 있는 더 큰 그림이나 인사이트를 제시해주세요. (예시: '이 사용자 목록은 `orders` 테이블의 VIP 고객 데이터와 연결하여 구매 패턴을 분석할 수 있습니다.')"
+        },
+        "suggestion": {
+            "title": "### 추가 분석 제안 💡",
+            "instruction": "현재 분석에서 한 단계 더 나아갈 수 있는 구체적인 질문 2-3가지를 제안해주세요. 각 질문에 대해 어떤 테이블을 어떻게 조인하거나 분석해야 하는지 간략한 방향을 포함해주세요. 사용자가 다음 행동을 쉽게 결정할 수 있도록 영감을 주는 제안이어야 합니다."
+        }
+    }
 
-### 2. 쿼리 형식
-각 쿼리는 다음 형식으로 작성:
+    if analysis_type not in missions:
+        raise ValueError("Invalid analysis type specified.")
 
+    selected_mission = missions[analysis_type]
+
+    return f"""
+당신은 데이터 분석 전문가입니다. 사용자의 질문과 그에 대한 BigQuery 조회 결과, 그리고 전체 데이터셋의 스키마 정보가 주어졌습니다.
+
+## 1. 분석 컨텍스트
+**사용자 질문**: {question}
+**실행된 SQL**:
 ```sql
--- 쿼리 제목: [구체적인 제목]
--- 설명: [이 쿼리가 무엇을 분석하는지, 왜 유용한지]
--- 예상 결과: [어떤 인사이트를 얻을 수 있는지]
-
-[실제 SQL 쿼리]
+{sql_query}
+```
+**조회 결과 (상위 10개 샘플)**:
+```json
+{json.dumps(sample_data, indent=2, ensure_ascii=False, default=str)}
 ```
 
-### 3. 최적화 고려사항
-- **성능**: 대용량 데이터 처리를 위한 최적화
-- **파티셔닝**: 파티션 필드 활용 (있는 경우)
-- **클러스터링**: 클러스터 필드 활용 (있는 경우)
-- **비용**: 스캔량 최소화를 위한 컬럼 선택
-- **가독성**: 이해하기 쉬운 쿼리 구조
+## 2. 전체 데이터셋 스키마 정보
+{schema_prompt}
 
-### 4. 고급 기능 활용
-- **윈도우 함수**: 랭킹, 누적합, 이동평균 등
-- **CTE (Common Table Expression)**: 복잡한 로직의 단계별 분해
-- **조건부 집계**: CASE WHEN을 활용한 유연한 집계
-- **문자열/날짜 함수**: 데이터 타입별 적절한 함수 활용
-- **서브쿼리**: 필요한 경우 효율적인 서브쿼리 사용
+## 3. 당신의 임무
+위 정보를 바탕으로 다음 항목에 대해 전문적인 답변을 생성해주세요. 답변은 마크다운 형식으로 작성합니다.
 
-### 5. 쿼리별 특징
-1. **기본 현황**: 행 수, 기간, 주요 카테고리 분포
-2. **품질 검증**: 완성도, 일관성, 유효성 체크
-3. **관계 분석**: 테이블 조인, 참조 무결성, 연관성
-4. **트렌드 분석**: 시계열 패턴, 성장률, 계절성
-5. **KPI 계산**: 핵심 비즈니스 메트릭, 벤치마크
+**요청된 분석: {selected_mission['title']}**
 
-### 6. 데이터 타입별 처리 가이드
-- **RECORD 타입**: 중첩 구조 접근 시 점(.) 표기법 사용
-- **REPEATED 필드**: UNNEST() 함수를 활용한 배열 처리
-- **TIMESTAMP/DATE**: 시간대 처리 및 날짜 함수 활용
-- **STRING**: 정규식, LIKE 패턴 등 텍스트 처리
-- **NUMERIC**: 정밀도 고려한 수치 계산
+**지시사항**: {selected_mission['instruction']}
 
-### 7. 비즈니스 관점 고려사항
-- **사용자 행동 분석**: 세션, 이벤트, 전환율 등
-- **성능 지표**: KPI, ROI, 성장률 등
-- **운영 효율성**: 처리량, 응답시간, 오류율 등
-- **고객 세그멘테이션**: 사용자 그룹, 코호트 분석 등
-- **예측 분석**: 트렌드 예측, 계절성 분석 등
+**작성 스타일**:
+- 전문가적이면서도 이해하기 쉬운 톤앤매너를 유지하세요.
+- 이모지를 적절히 사용하여 가독성을 높여주세요.
+- 답변은 요청된 분석 내용만 포함하고, 다른 소제목은 추가하지 마세요.
+"""
 
-각 쿼리는 실행 가능하고 즉시 활용할 수 있도록 작성해주세요. 
-메타데이터에서 실제 존재하는 테이블과 컬럼만 사용하고, 
-BigQuery 표준 SQL 문법을 준수해주세요."""
+def get_profiling_system_prompt() -> str:
+    """데이터 프로파일링을 위한 시스템 프롬프트"""
+    return """당신은 데이터 분석 및 BigQuery 전문가입니다. 
+제공된 BigQuery 테이블 메타데이터를 분석하여 전문적이고 실용적인 데이터 프로파일링 리포트를 작성해주세요.
+
+## 분석 관점
+1. **비즈니스 관점**: 데이터가 비즈니스에 어떤 가치를 제공할 수 있는지
+2. **기술적 관점**: 데이터 구조, 품질, 성능 최적화 방안
+3. **분석 관점**: 가능한 분석 시나리오와 인사이트 도출 방법
+
+## 작성 스타일
+- 전문적이지만 이해하기 쉬운 한국어
+- 구체적인 수치와 예시 포함
+- 실무에 바로 적용 가능한 제안
+- 리스크와 제약사항도 균형있게 언급
+
+## 리포트 구조
+각 섹션별로 심도 있고 실용적인 내용을 작성해주세요:
+
+### 1. 개요 (Overview)
+- 데이터셋의 전반적인 특성과 규모
+- 비즈니스 도메인 추정
+- 데이터의 잠재적 가치와 활용도
+
+### 2. 테이블 상세 분석 (Table Analysis)
+- 각 테이블별 세부 정보
+- 스키마 구조의 복잡성과 특징
+- 데이터 품질 예상 이슈
+- 성능 고려사항 (파티셔닝, 클러스터링 등)
+
+### 3. 테이블 간 관계 추론 (Relationships)
+- 공통 필드 기반 관계 분석
+- 잠재적 조인 키 식별
+- 데이터 플로우 추정
+- 정규화 수준 평가
+
+### 4. 분석 가능 질문 (Business Questions)
+- 이 데이터로 답할 수 있는 핵심 비즈니스 질문 5-7개
+- 각 질문별 분석 접근 방법
+- 예상되는 인사이트의 종류
+- 추가 데이터 요구사항
+
+### 5. 활용 권장사항 (Recommendations)
+- 효과적인 데이터 활용 전략
+- 분석 우선순위 제안
+- 데이터 거버넌스 고려사항
+- 성능 최적화 방안
+- 주의사항 및 제한점
+
+각 섹션은 독립적으로도 가치 있는 내용을 포함해야 하며, 
+전체적으로는 일관성 있는 분석 스토리를 제공해야 합니다."""

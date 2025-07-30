@@ -29,7 +29,8 @@ from config.prompts import (
     get_sql_generation_system_prompt,
     get_analysis_report_prompt,
     get_html_generation_prompt,
-    get_profiling_system_prompt
+    get_profiling_system_prompt,
+    get_specific_contextual_analysis_prompt
 )
 
 # 스키마 관리자 임포트
@@ -476,6 +477,32 @@ class IntegratedAnalyzer:
 </body>
 </html>"""
 
+    def generate_contextual_analysis(self, question: str, sql_query: str, query_results: List[Dict], project_id: str, table_ids: List[str]) -> str:
+        """쿼리 결과에 대한 컨텍스트 분석 생성"""
+        if not self.anthropic_client:
+            raise Exception("Anthropic 클라이언트가 초기화되지 않았습니다.")
+
+        if not query_results:
+            return "분석할 데이터가 없어 컨텍스트 분석을 생략합니다."
+
+        analysis_prompt = get_contextual_analysis_prompt(
+            question, sql_query, query_results, project_id, table_ids
+        )
+
+        try:
+            response = self.anthropic_client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=2000,
+                messages=[
+                    {"role": "user", "content": analysis_prompt}
+                ]
+            )
+            contextual_analysis = response.content[0].text.strip()
+            return contextual_analysis
+        except Exception as e:
+            logger.error(f"컨텍스트 분석 생성 중 오류 발생: {str(e)}")
+            return "결과에 대한 컨텍스트 분석을 생성하는 데 실패했습니다."
+
 # 통합 분석기 인스턴스 생성
 integrated_analyzer = IntegratedAnalyzer(anthropic_client, bigquery_client) if (anthropic_client and bigquery_client) else None
 
@@ -661,72 +688,45 @@ def run_profiling():
 def quick_query():
     """빠른 조회 - 데이터만 반환"""
     try:
-        if not integrated_analyzer:
-            return jsonify({
-                "success": False,
-                "error": "분석 엔진이 초기화되지 않았습니다.",
-                "mode": "quick"
-            }), 500
+        if not integrated_analyzer: return jsonify({"success": False, "error": "분석 엔진이 초기화되지 않았습니다."}), 500
+        data = request.json
+        if not data or 'question' not in data: return jsonify({"success": False, "error": "요청 본문에 'question' 필드가 필요합니다."}), 400
+        
+        question = data['question'].strip()
+        project_id = data.get('project_id', '').strip()
+        table_ids = data.get('table_ids', [])
+        if not question or not project_id or not table_ids: return jsonify({"success": False, "error": "질문, 프로젝트 ID, 테이블 ID가 모두 필요합니다."}), 400
 
-        if not request.json or 'question' not in request.json:
-            return jsonify({
-                "success": False,
-                "error": "요청 본문에 'question' 필드가 필요합니다.",
-                "mode": "quick"
-            }), 400
-
-        question = request.json['question'].strip()
-        project_id = request.json.get('project_id', '').strip()
-        table_ids = request.json.get('table_ids', [])
-        
-        if isinstance(table_ids, str):
-            table_ids = [tid.strip() for tid in table_ids.replace('\n', ',').split(',') if tid.strip()]
-        
-        if not question:
-            return jsonify({
-                "success": False,
-                "error": "질문이 비어있습니다.",
-                "mode": "quick"
-            }), 400
-        
-        if not project_id or not table_ids:
-            return jsonify({
-                "success": False,
-                "error": "project_id와 table_ids가 필요합니다.",
-                "mode": "quick"
-            }), 400
-        
-        # SQL 생성 및 데이터 조회
         sql_query = integrated_analyzer.natural_language_to_sql(question, project_id, table_ids)
         query_result = integrated_analyzer.execute_bigquery(sql_query)
         
-        if not query_result["success"]:
-            return jsonify({
-                "success": False,
-                "error": query_result["error"],
-                "mode": "quick",
-                "original_question": question,
-                "generated_sql": sql_query,
-                "error_type": query_result.get("error_type", "unknown")
-            }), 500
+        if not query_result["success"]: return jsonify({"success": False, "error": query_result["error"], "generated_sql": sql_query}), 500
         
         return jsonify({
-            "success": True,
-            "mode": "quick",
-            "original_question": question,
-            "generated_sql": sql_query,
-            "data": query_result["data"],
-            "row_count": query_result.get("row_count", 0),
-            "execution_stats": query_result.get("job_stats", {})
+            "success": True, "original_question": question, "generated_sql": sql_query,
+            "data": query_result["data"], "row_count": query_result.get("row_count", 0)
         })
-        
     except Exception as e:
         logger.error(f"빠른 조회 중 오류: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": f"서버 오류: {str(e)}",
-            "mode": "quick"
-        }), 500
+        return jsonify({"success": False, "error": f"서버 오류: {str(e)}"}), 500
+
+@app.route('/analyze-context', methods=['POST'])
+def analyze_context():
+    """요청된 특정 컨텍스트 분석을 수행"""
+    try:
+        if not integrated_analyzer: return jsonify({"success": False, "error": "분석 엔진이 초기화되지 않았습니다."}), 500
+        data = request.json
+        required_fields = ['question', 'sql_query', 'query_results', 'project_id', 'table_ids', 'analysis_type']
+        if not data or not all(field in data for field in required_fields): return jsonify({"success": False, "error": "필수 필드가 누락되었습니다."}), 400
+
+        analysis = integrated_analyzer.generate_specific_analysis(
+            question=data['question'], sql_query=data['sql_query'], query_results=data['query_results'],
+            project_id=data['project_id'], table_ids=data['table_ids'], analysis_type=data['analysis_type']
+        )
+        return jsonify({"success": True, "analysis": analysis})
+    except Exception as e:
+        logger.error(f"컨텍스트 분석 중 오류: {str(e)}")
+        return jsonify({"success": False, "error": f"서버 오류: {str(e)}"}), 500
 
 @app.route('/analyze', methods=['POST'])
 def structured_analysis():

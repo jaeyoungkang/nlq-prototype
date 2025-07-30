@@ -17,7 +17,7 @@ from .prompts import (
     get_analysis_report_prompt,
     get_html_generation_prompt,
     get_profiling_system_prompt,
-    get_sql_query_generation_prompt,
+    get_specific_contextual_analysis_prompt,
 )
 
 __all__ = [
