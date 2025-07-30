@@ -491,6 +491,11 @@ def settings_page():
     """설정 페이지"""
     return render_template('settings.html')
 
+@app.route('/history')
+def logs_page():
+    """history 페이지"""
+    return render_template('history.html')
+
 @app.route('/<path:filename>')
 def static_files(filename):
     """정적 파일 서빙"""
@@ -960,8 +965,6 @@ def get_stats():
         logger.error(f"통계 조회 중 오류: {e}")
         return jsonify({"error": "통계 조회 중 오류가 발생했습니다."}), 500
 
-# app.py에 추가할 코드
-
 @app.route('/api/gcp-projects', methods=['GET'])
 def get_gcp_projects():
     """인증된 GCP 계정의 프로젝트 목록 조회 (BigQuery 접근 가능한 프로젝트)"""
@@ -1180,6 +1183,17 @@ def get_current_gcp_project():
             "current_project": None
         }), 500
 
+# --- 인증 라우트 ---
+@app.route('/api/auth/status')
+def auth_status():
+    """GCP 인증 상태를 확인합니다."""
+    is_authenticated = bigquery_client is not None
+    return jsonify({
+        "authenticated": is_authenticated,
+        "project_id": bigquery_client.project if is_authenticated else None
+    })
+
+
 # --- 오류 핸들러 ---
 
 @app.errorhandler(404)
@@ -1203,7 +1217,7 @@ if __name__ == '__main__':
         logger.warning("경고: ANTHROPIC_API_KEY 환경 변수가 설정되지 않았습니다.")
     
     if not bigquery_client:
-        logger.warning("경고: BigQuery 클라이언트가 초기화되지 않았습니다.")
+        logger.warning("경고: BigQuery 클라이언트가 초기화되지 않았습니다. GCP 인증이 필요합니다.")
     
     if not integrated_analyzer:
         logger.warning("경고: 통합 분석기가 초기화되지 않았습니다.")
@@ -1212,8 +1226,8 @@ if __name__ == '__main__':
     logger.info(f"Anthropic API 상태: {'사용 가능' if anthropic_client else '사용 불가'}")
     logger.info(f"BigQuery 상태: {'사용 가능' if bigquery_client else '사용 불가'}")
     logger.info(f"Firestore 상태: {'사용 가능' if db_manager.db else '사용 불가'}")
-    logger.info("지원 모드: 빠른 조회(/quick), 구조화된 분석(/analyze), 창의적 HTML(/creative-html)")
+    logger.info("지원 모드: 빠른 조회(/quick), 구조화된 분석(/analyze), 창의적 HTML(/creative-html), 인증 상태(/api/auth/status)")
     
     # Cloud Run에서는 PORT 환경변수 사용
     port = int(os.getenv('PORT', 8080))
-    app.run(debug=False, host='0.0.0.0', port=port)  # 프로덕션에서는 debug=False
+    app.run(debug=False, host='0.0.0.0', port=port)

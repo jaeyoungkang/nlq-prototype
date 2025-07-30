@@ -1,12 +1,12 @@
 {% extends "layout.html" %}
 
-{% block title %}프로파일링 기록 - BigQuery AI Assistant{% endblock %}
+{% block title %}프로파일 - BigQuery AI Assistant{% endblock %}
 
 {% block content %}
-<div class="p-8 overflow-y-auto w-full">
+<div class="p-8 overflow-y-auto w-full h-full">
     <header class="mb-8 flex justify-between items-center">
         <div>
-            <h1 class="text-3xl font-bold text-gray-900">프로파일링 기록</h1>
+            <h1 class="text-3xl font-bold text-gray-900">프로파일</h1>
             <p class="text-gray-600 mt-2">과거에 실행된 프로파일링 작업 목록입니다. 각 항목을 클릭하여 상세 리포트를 확인하세요.</p>
         </div>
         <button id="refreshButton" class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-800 font-medium py-2 px-4 rounded-lg text-sm transition-colors">
@@ -24,6 +24,7 @@
                         <th scope="col" class="px-6 py-3">상태</th>
                         <th scope="col" class="px-6 py-3">시작 시간</th>
                         <th scope="col" class="px-6 py-3">소요 시간</th>
+                        <th scope="col" class="px-6 py-3 text-right">작업</th>
                     </tr>
                 </thead>
                 <tbody id="logs-table-body">
@@ -46,32 +47,7 @@
         errorState: document.getElementById('errorState'),
         emptyState: document.getElementById('emptyState'),
         refreshButton: document.getElementById('refreshButton'),
-        selectedTablesNavList: document.getElementById('selected-tables-nav-list'),
     };
-
-    function updateSelectedTablesNav() {
-        const savedSettings = localStorage.getItem('bigqueryAISettings');
-        if (!elements.selectedTablesNavList) return;
-        
-        elements.selectedTablesNavList.innerHTML = '';
-        if (!savedSettings) {
-            elements.selectedTablesNavList.innerHTML = '<li class="px-3 py-1 text-sm text-gray-400">테이블이 선택되지 않았습니다.</li>';
-            return;
-        }
-        
-        const settings = JSON.parse(savedSettings);
-        if (!settings.tableIds || settings.tableIds.length === 0) {
-            elements.selectedTablesNavList.innerHTML = '<li class="px-3 py-1 text-sm text-gray-400">테이블이 선택되지 않았습니다.</li>';
-        } else {
-            settings.tableIds.forEach(tableId => {
-                const li = document.createElement('li');
-                li.className = 'px-3 py-1 text-sm text-gray-700 truncate';
-                li.textContent = tableId.split('.').pop();
-                li.title = tableId;
-                elements.selectedTablesNavList.appendChild(li);
-            });
-        }
-    }
 
     async function fetchLogs() {
         elements.loadingState.classList.remove('hidden');
@@ -107,9 +83,27 @@
     }
     
     function populateTable(logs) {
+        const selectedProfileJSON = localStorage.getItem('selectedProfile');
+        const selectedProfileId = selectedProfileJSON ? JSON.parse(selectedProfileJSON).id : null;
+        
+        const settingsJSON = localStorage.getItem('bigqueryAISettings');
+        const settings = settingsJSON ? JSON.parse(settingsJSON) : null;
+        const settingsTableIds = settings ? new Set(settings.tableIds.sort()) : null;
+
+        const areSetsEqual = (a, b) => {
+            if (!a || !b) return false;
+            if (a.size !== b.size) return false;
+            const sortedA = [...a].sort();
+            const sortedB = [...b].sort();
+            for (let i = 0; i < sortedA.length; i++) {
+                if (sortedA[i] !== sortedB[i]) return false;
+            }
+            return true;
+        };
+
         logs.forEach(log => {
             const mainRow = document.createElement('tr');
-            mainRow.className = 'bg-white border-b hover:bg-gray-50 cursor-pointer log-item';
+            mainRow.className = 'bg-white border-b hover:bg-gray-50 log-item';
             mainRow.dataset.sessionId = log.id;
             mainRow.dataset.detailsLoaded = 'false';
 
@@ -132,82 +126,152 @@
                 }
             }
             
+            const isCurrentlySelected = log.id === selectedProfileId;
+            let isSelectable = true;
+            let disabledTitle = '';
+
+            if (settingsTableIds) {
+                const profileTableIds = new Set((log.table_ids || []).sort());
+                if (!areSetsEqual(settingsTableIds, profileTableIds)) {
+                    isSelectable = false;
+                    disabledTitle = '현재 프로젝트 설정의 테이블 구성과 다릅니다.';
+                }
+            }
+
             mainRow.innerHTML = `
-                <td class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">${log.project_id}</td>
-                <td class="px-6 py-4">${log.table_ids ? log.table_ids.length : 0}</td>
-                <td class="px-6 py-4">
+                <td class="px-6 py-4 font-medium text-gray-900 whitespace-nowrap cursor-pointer">${log.project_id}</td>
+                <td class="px-6 py-4 cursor-pointer">${log.table_ids ? log.table_ids.length : 0}</td>
+                <td class="px-6 py-4 cursor-pointer">
                     <span class="px-2 py-1 text-xs font-medium rounded-full ${statusColor}">${log.status}</span>
                 </td>
-                <td class="px-6 py-4">${startTime.toLocaleString('ko-KR')}</td>
-                <td class="px-6 py-4">${duration}</td>
+                <td class="px-6 py-4 cursor-pointer">${startTime.toLocaleString('ko-KR')}</td>
+                <td class="px-6 py-4 cursor-pointer">${duration}</td>
+                <td class="px-6 py-4 text-right">
+                    <button class="select-profile-btn text-sm font-medium text-blue-600 hover:text-blue-800 disabled:text-gray-400 disabled:cursor-not-allowed" 
+                            data-session-id="${log.id}" 
+                            data-project-id="${log.project_id}" 
+                            data-table-ids='${JSON.stringify(log.table_ids || [])}'
+                            title="${disabledTitle}"
+                            ${isCurrentlySelected || !isSelectable ? 'disabled' : ''}>
+                        ${isCurrentlySelected ? '선택됨' : '선택'}
+                    </button>
+                </td>
             `;
             elements.tableBody.appendChild(mainRow);
 
             const detailsRow = document.createElement('tr');
             detailsRow.className = 'log-details hidden';
-            detailsRow.innerHTML = `<td colspan="5" class="p-4 bg-gray-50 details-content border-b"></td>`;
+            detailsRow.innerHTML = `<td colspan="6" class="p-0 bg-gray-100 details-content border-b"></td>`;
             elements.tableBody.appendChild(detailsRow);
         });
     }
 
     async function toggleDetails(rowElement) {
-        const sessionId = rowElement.dataset.sessionId;
-        const detailsLoaded = rowElement.dataset.detailsLoaded === 'true';
         const detailsRow = rowElement.nextElementSibling;
         const detailsContent = detailsRow.querySelector('.details-content');
 
         const isHidden = detailsRow.classList.contains('hidden');
+        if (!isHidden) {
+            detailsRow.classList.add('hidden');
+            rowElement.classList.remove('bg-indigo-50');
+            return;
+        }
 
-        // Close all other open details
-        document.querySelectorAll('.log-details').forEach(row => {
-            if (row !== detailsRow) {
-                row.classList.add('hidden');
-            }
-        });
-        document.querySelectorAll('.log-item').forEach(row => {
-            if (row !== rowElement) {
-                row.classList.remove('bg-gray-100');
-            }
-        });
+        document.querySelectorAll('.log-details').forEach(row => row.classList.add('hidden'));
+        document.querySelectorAll('.log-item').forEach(row => row.classList.remove('bg-indigo-50'));
         
-        // Toggle current row
-        detailsRow.classList.toggle('hidden', !isHidden);
-        rowElement.classList.toggle('bg-gray-100', !isHidden);
+        detailsRow.classList.remove('hidden');
+        rowElement.classList.add('bg-indigo-50');
 
-
-        if (!detailsLoaded && !detailsRow.classList.contains('hidden')) {
+        if (rowElement.dataset.detailsLoaded === 'false') {
             detailsContent.innerHTML = '<div class="text-center text-gray-500 p-4">상세 내용을 불러오는 중...</div>';
             try {
+                const sessionId = rowElement.dataset.sessionId;
                 const response = await fetch(`/logs/${sessionId}`);
                 if (!response.ok) throw new Error('상세 내용을 불러오지 못했습니다.');
                 const data = await response.json();
                 
                 if (data.error) throw new Error(data.error);
 
-                const reportHtml = data.profiling_report && data.profiling_report.full_report
-                    ? marked.parse(data.profiling_report.full_report)
-                    : '<p>상세 리포트가 없습니다.</p>';
+                let reportHtml = '<p class="p-6">상세 리포트가 없습니다.</p>';
+                if (data.profiling_report) {
+                    if (data.profiling_report.sections && Object.keys(data.profiling_report.sections).length > 0) {
+                        const sections = data.profiling_report.sections;
+                        const sectionOrder = ["overview", "table_analysis", "relationships", "business_questions", "recommendations"];
+                        const sectionInfo = {
+                            "overview": { title: "1. 📋 데이터셋 개요", color: "border-blue-500" },
+                            "table_analysis": { title: "2. 🔍 테이블 상세 분석", color: "border-green-500" },
+                            "relationships": { title: "3. 🔗 테이블 간 관계", color: "border-purple-500" },
+                            "business_questions": { title: "4. ❓ 분석 가능 질문", color: "border-yellow-500" },
+                            "recommendations": { title: "5. 💡 활용 권장사항", color: "border-indigo-500" }
+                        };
 
-                detailsContent.innerHTML = `<article class="prose prose-sm max-w-none p-4">${reportHtml}</article>`;
+                        let sectionsHtml = '<div class="p-4 md:p-6 space-y-4">';
+                        for (const key of sectionOrder) {
+                            if (sections[key]) {
+                                sectionsHtml += `
+                                <div class="bg-white rounded-lg shadow-sm border-l-4 ${sectionInfo[key].color}">
+                                    <h3 class="text-base md:text-lg font-semibold text-gray-800 p-4 flex items-center">
+                                        ${sectionInfo[key].title}
+                                    </h3>
+                                    <div class="p-4 pt-0 prose prose-sm max-w-none text-gray-600">
+                                        ${marked.parse(sections[key])}
+                                    </div>
+                                </div>`;
+                            }
+                        }
+                        sectionsHtml += '</div>';
+                        reportHtml = sectionsHtml;
+                    } else if (data.profiling_report.full_report) {
+                        reportHtml = `<article class="prose prose-sm max-w-none p-6">${marked.parse(data.profiling_report.full_report)}</article>`;
+                    }
+                }
+                detailsContent.innerHTML = reportHtml;
                 rowElement.dataset.detailsLoaded = 'true';
-
             } catch (e) {
-                detailsContent.innerHTML = `<div class="text-red-500 p-4">오류: ${e.message}</div>`;
+                detailsContent.innerHTML = `<div class="text-red-500 p-6">오류: ${e.message}</div>`;
             }
         }
     }
 
-
-    document.addEventListener('DOMContentLoaded', () => {
+    function initializePage() {
         fetchLogs();
-        updateSelectedTablesNav();
         elements.refreshButton.addEventListener('click', fetchLogs);
+        
         elements.tableBody.addEventListener('click', (event) => {
+            const selectBtn = event.target.closest('.select-profile-btn');
+            if (selectBtn) {
+                event.stopPropagation();
+                const profile = {
+                    id: selectBtn.dataset.sessionId,
+                    projectId: selectBtn.dataset.projectId,
+                    tableIds: JSON.parse(selectBtn.dataset.tableIds)
+                };
+                localStorage.setItem('selectedProfile', JSON.stringify(profile));
+                window.dispatchEvent(new Event('contextChanged'));
+                
+                document.querySelectorAll('.select-profile-btn').forEach(btn => {
+                    if (!btn.title) { // Only re-enable buttons that are selectable
+                        btn.textContent = '선택';
+                        btn.disabled = false;
+                    }
+                });
+                selectBtn.textContent = '선택됨';
+                selectBtn.disabled = true;
+                return;
+            }
+
             const row = event.target.closest('.log-item');
             if (row) {
                 toggleDetails(row);
             }
         });
-    });
+    }
+
+    if (window.gcpAuthCompleted) {
+        initializePage();
+    } else {
+        window.addEventListener('authComplete', initializePage, { once: true });
+    }
 </script>
 {% endblock %}
