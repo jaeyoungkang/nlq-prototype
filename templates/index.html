@@ -9,22 +9,16 @@
         <div class="chat-header-info">
             <div class="chat-avatar">AI</div>
             <div>
-                <h2 class="chat-title">분석 채팅</h2>
+                <h2 class="chat-title">데이터 분석 채팅</h2>
                 <p class="chat-subtitle">BigQuery 데이터를 자연어로 분석하세요</p>
             </div>
         </div>
         
         <div class="chat-actions">
             <div class="status-indicator">
-                <div class="status-dot" id="profiling-status-dot"></div>
-                <span id="profilingStatus">대기 중</span>
+                <div class="status-dot" id="context-status-dot"></div>
+                <span id="contextStatus">설정 확인 중...</span>
             </div>
-            <button id="startProfilingButton" class="btn btn-primary" disabled>
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2-2V7a2 2 0 012-2h2a2 2 0 002 2v6a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 00-2 2h-2a2 2 0 00-2 2v6a2 2 0 01-2 2H9z" />
-                </svg>
-                <span>프로파일링 시작</span>
-            </button>
         </div>
     </header>
 
@@ -64,6 +58,9 @@
                 <button class="suggestion-button" onclick="insertQuickQuestion('상위 10개 레코드를 보여줘')">
                     🔍 데이터 미리보기
                 </button>
+                <button class="suggestion-button" onclick="insertQuickQuestion('이 데이터로 어떤 분석이 가능해?')">
+                    💡 분석 아이디어
+                </button>
             </div>
         </div>
     </div>
@@ -76,9 +73,8 @@
     let isFirstMessage = true;
 
     const elements = {
-        startProfilingButton: document.getElementById('startProfilingButton'),
-        profilingStatus: document.getElementById('profilingStatus'),
-        profilingStatusDot: document.getElementById('profiling-status-dot'),
+        contextStatus: document.getElementById('contextStatus'),
+        contextStatusDot: document.getElementById('context-status-dot'),
         messagesContainer: document.getElementById('messagesContainer'),
         chatInput: document.getElementById('chatInput'),
         sendButton: document.getElementById('sendButton'),
@@ -94,6 +90,7 @@
             const profile = JSON.parse(savedProfile);
             if (profile.id && profile.projectId && profile.tableIds && profile.tableIds.length > 0) {
                 context = { projectId: profile.projectId, tableIds: profile.tableIds };
+                elements.contextStatus.textContent = `프로파일: ${profile.id.substring(0, 8)}...`;
             }
         }
         
@@ -101,24 +98,22 @@
             const settings = JSON.parse(savedSettings);
             if (settings.projectId && settings.tableIds && settings.tableIds.length > 0) {
                 context = settings;
+                elements.contextStatus.textContent = `프로젝트: ${settings.projectId}`;
             }
         }
         
         if (context) {
             currentSettings = context;
-            elements.startProfilingButton.disabled = false;
             elements.chatInput.disabled = false;
             elements.sendButton.disabled = false;
-            elements.profilingStatusDot.classList.add('active');
-            elements.profilingStatus.textContent = '준비됨';
+            elements.contextStatusDot.classList.add('active');
             if (isFirstMessage) showWelcomeMessage();
         } else {
             currentSettings = { projectId: null, tableIds: [] };
-            elements.startProfilingButton.disabled = true;
             elements.chatInput.disabled = true;
             elements.sendButton.disabled = true;
-            elements.profilingStatusDot.classList.remove('active');
-            elements.profilingStatus.textContent = '설정 필요';
+            elements.contextStatusDot.classList.remove('active');
+            elements.contextStatus.textContent = '설정 필요';
             showSettingsNeededMessage();
         }
     }
@@ -128,13 +123,13 @@
             <div class="welcome-container">
                 <div class="welcome-icon">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
                     </svg>
                 </div>
                 <h2 class="welcome-title">무엇을 도와드릴까요?</h2>
                 <p class="welcome-subtitle">
-                    BigQuery 데이터에 대해 자연어로 질문하거나,<br>
-                    프로파일링을 통해 데이터를 자세히 분석해보세요.
+                    BigQuery 데이터에 대해 자연어로 질문해보세요.<br>
+                    테이블 구조, 데이터 분석, 트렌드 등 무엇이든 물어보세요.
                 </p>
             </div>`;
         elements.quickSuggestions.classList.remove('hidden');
@@ -152,8 +147,17 @@
                 <h2 class="welcome-title">설정이 필요합니다</h2>
                 <p class="welcome-subtitle">
                     좌측 메뉴의 <a href="/settings" class="text-orange-600 font-semibold hover:underline">프로젝트 설정</a>으로 이동하여<br>
-                    분석할 BigQuery 프로젝트와 테이블을 먼저 선택해주세요.
+                    BigQuery 프로젝트를 선택하고 프로파일링을 완료해주세요.
                 </p>
+                <div class="mt-6">
+                    <a href="/settings" class="btn btn-primary">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>프로젝트 설정하러 가기</span>
+                    </a>
+                </div>
             </div>`;
         elements.quickSuggestions.classList.add('hidden');
     }
@@ -376,11 +380,6 @@
     // Event listeners
     document.addEventListener('DOMContentLoaded', function() {
         checkContextAndSetUIState();
-        
-        // Profiling button
-        elements.startProfilingButton.addEventListener('click', () => {
-            window.location.href = '/profiling-history';
-        });
         
         // Context change detection
         window.addEventListener('contextChanged', checkContextAndSetUIState);

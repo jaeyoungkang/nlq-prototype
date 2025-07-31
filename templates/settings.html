@@ -5,11 +5,17 @@
 {% block content %}
 <div class="p-8 overflow-y-auto w-full">
     <header class="mb-8">
-        <h1 class="text-3xl font-bold text-gray-900 mb-2">프로젝트 설정</h1>
-        <p class="text-gray-600">분석할 GCP 프로젝트와 BigQuery 테이블을 선택하세요.</p>
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">프로젝트 설정 및 프로파일링</h1>
+        <p class="text-gray-600">GCP 프로젝트와 테이블을 선택하고, 데이터를 프로파일링하여 분석을 시작하세요.</p>
     </header>
 
-    <main class="card">
+    <!-- 1. 프로젝트 설정 섹션 -->
+    <section class="card mb-8">
+        <div class="card-header">
+            <h2 class="card-title">1. 프로젝트 설정</h2>
+            <p class="card-subtitle">분석할 BigQuery 프로젝트와 테이블을 선택하세요</p>
+        </div>
+
         <div class="space-y-6">
             <!-- GCP Project Selection -->
             <div class="form-group">
@@ -43,19 +49,146 @@
                     </button>
                 </div>
             </div>
-        </div>
-    </main>
 
-    <!-- Action Footer -->
-    <footer class="mt-8 flex justify-between items-center">
-        <div id="saveStatus" class="text-sm font-medium"></div>
-        <button id="saveSettingsButton" class="btn btn-primary" disabled>
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-            </svg>
-            <span>설정 저장</span>
-        </button>
-    </footer>
+            <!-- Save Settings Button -->
+            <div class="flex justify-between items-center pt-4 border-t border-gray-200">
+                <div id="saveStatus" class="text-sm font-medium"></div>
+                <button id="saveSettingsButton" class="btn btn-primary" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>설정 저장</span>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- 2. 프로파일링 섹션 -->
+    <section class="card mb-8" id="profilingSection" style="display: none;">
+        <div class="card-header">
+            <h2 class="card-title">2. 데이터 프로파일링</h2>
+            <p class="card-subtitle">선택된 테이블의 구조와 특성을 분석합니다</p>
+        </div>
+
+        <div class="space-y-6">
+            <!-- Profiling Controls -->
+            <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div>
+                    <h3 class="font-semibold text-gray-900">프로파일링 실행</h3>
+                    <p class="text-sm text-gray-600 mt-1">테이블 구조, 데이터 품질, 관계 분석을 수행합니다</p>
+                </div>
+                <button id="startProfilingButton" class="btn btn-primary" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2-2V7a2 2 0 012-2h2a2 2 0 002 2v6a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 00-2 2h-2a2 2 0 00-2 2v6a2 2 0 01-2 2H9z" />
+                    </svg>
+                    <span>프로파일링 시작</span>
+                </button>
+            </div>
+
+            <!-- Profiling Progress -->
+            <div id="profilingProgress" class="hidden">
+                <div class="bg-white border border-gray-200 rounded-lg p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="font-semibold text-gray-900">진행 상황</h4>
+                        <div class="flex items-center gap-2">
+                            <div class="status-dot active" id="profilingStatusDot"></div>
+                            <span id="profilingStatusText" class="text-sm text-gray-600">대기 중</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Progress Steps -->
+                    <div class="space-y-3">
+                        <div class="progress-step" id="step-0">
+                            <div class="flex items-center gap-3">
+                                <div class="step-indicator">1</div>
+                                <span class="step-text">메타데이터 추출</span>
+                            </div>
+                        </div>
+                        <div class="progress-step" id="step-1">
+                            <div class="flex items-center gap-3">
+                                <div class="step-indicator">2</div>
+                                <span class="step-text">데이터 구조 분석</span>
+                            </div>
+                        </div>
+                        <div class="progress-step" id="step-2">
+                            <div class="flex items-center gap-3">
+                                <div class="step-indicator">3</div>
+                                <span class="step-text">관계 분석</span>
+                            </div>
+                        </div>
+                        <div class="progress-step" id="step-3">
+                            <div class="flex items-center gap-3">
+                                <div class="step-indicator">4</div>
+                                <span class="step-text">리포트 생성</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Log -->
+                    <div class="mt-6">
+                        <h5 class="font-medium text-gray-900 mb-2">실시간 로그</h5>
+                        <div id="profilingLog" class="bg-gray-900 text-green-400 p-4 rounded-lg h-32 overflow-y-auto font-mono text-xs">
+                            <div>프로파일링 준비 중...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Profiling Results Preview -->
+            <div id="profilingResults" class="hidden">
+                <div class="bg-white border border-gray-200 rounded-lg p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="font-semibold text-gray-900">프로파일링 완료</h4>
+                        <div class="flex gap-2">
+                            <button id="viewFullReportButton" class="btn btn-secondary text-xs">
+                                전체 리포트 보기
+                            </button>
+                            <button id="useProfileButton" class="btn btn-primary text-xs">
+                                이 프로파일 사용
+                            </button>
+                        </div>
+                    </div>
+                    <div id="profilingResultsContent" class="prose prose-sm max-w-none">
+                        <!-- Results will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3. 프로파일 관리 섹션 -->
+    <section class="card">
+        <div class="card-header">
+            <h2 class="card-title">3. 기존 프로파일 관리</h2>
+            <p class="card-subtitle">이전에 생성된 프로파일을 선택하거나 관리합니다</p>
+        </div>
+
+        <div class="space-y-4">
+            <!-- Profile Selection -->
+            <div id="profilesList" class="space-y-2">
+                <!-- Profiles will be populated here -->
+            </div>
+
+            <!-- No Profiles Message -->
+            <div id="noProfilesMessage" class="p-6 text-center text-gray-500 hidden">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p>아직 생성된 프로파일이 없습니다</p>
+                <p class="text-xs mt-1">위에서 프로파일링을 실행하여 첫 번째 프로파일을 생성하세요</p>
+            </div>
+
+            <!-- Refresh Profiles -->
+            <div class="flex justify-center pt-4 border-t border-gray-200">
+                <button id="refreshProfilesButton" class="btn btn-secondary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>프로파일 목록 새로고침</span>
+                </button>
+            </div>
+        </div>
+    </section>
 </div>
 {% endblock %}
 
@@ -63,8 +196,11 @@
 <script>
     let projectTables = [];
     let selectedTables = new Set();
+    let currentProfileSession = null;
+    let profilingEventSource = null;
 
     const elements = {
+        // Project Settings
         gcpProjectId: document.getElementById('gcpProjectId'),
         tablesContainer: document.getElementById('tablesContainer'),
         tablesPlaceholder: document.getElementById('tablesPlaceholder'),
@@ -73,8 +209,26 @@
         selectAllTablesButton: document.getElementById('selectAllTablesButton'),
         saveSettingsButton: document.getElementById('saveSettingsButton'),
         saveStatus: document.getElementById('saveStatus'),
+        
+        // Profiling
+        profilingSection: document.getElementById('profilingSection'),
+        startProfilingButton: document.getElementById('startProfilingButton'),
+        profilingProgress: document.getElementById('profilingProgress'),
+        profilingStatusDot: document.getElementById('profilingStatusDot'),
+        profilingStatusText: document.getElementById('profilingStatusText'),
+        profilingLog: document.getElementById('profilingLog'),
+        profilingResults: document.getElementById('profilingResults'),
+        profilingResultsContent: document.getElementById('profilingResultsContent'),
+        viewFullReportButton: document.getElementById('viewFullReportButton'),
+        useProfileButton: document.getElementById('useProfileButton'),
+        
+        // Profile Management
+        profilesList: document.getElementById('profilesList'),
+        noProfilesMessage: document.getElementById('noProfilesMessage'),
+        refreshProfilesButton: document.getElementById('refreshProfilesButton'),
     };
 
+    // ====== Project Settings Functions ======
     function saveSettings() {
         const projectId = elements.gcpProjectId.value;
         const tableIds = Array.from(selectedTables);
@@ -89,8 +243,15 @@
         showStatus('✅ 설정이 성공적으로 저장되었습니다!', 'success');
         validateInputs();
         
+        // Show profiling section
+        elements.profilingSection.style.display = 'block';
+        elements.startProfilingButton.disabled = false;
+        
         // Trigger context changed event
         window.dispatchEvent(new Event('contextChanged'));
+        
+        // Scroll to profiling section
+        elements.profilingSection.scrollIntoView({ behavior: 'smooth' });
     }
 
     function showStatus(message, type = 'info') {
@@ -110,6 +271,13 @@
         if (savedSettings) {
             const settings = JSON.parse(savedSettings);
             selectedTables = new Set(settings.tableIds || []);
+            
+            // If settings exist, show profiling section
+            if (settings.projectId && settings.tableIds && settings.tableIds.length > 0) {
+                elements.profilingSection.style.display = 'block';
+                elements.startProfilingButton.disabled = false;
+            }
+            
             return settings.projectId;
         }
         return null;
@@ -283,18 +451,349 @@
         const hasSelectedTables = selectedTables.size > 0;
         elements.saveSettingsButton.disabled = !(projectId && hasSelectedTables);
     }
-    
-    // Event listeners
-    elements.gcpProjectId.addEventListener('change', () => {
-        selectedTables.clear();
-        loadProjectTables();
-    });
-    
-    elements.saveSettingsButton.addEventListener('click', saveSettings);
 
-    // Initialize page
+    // ====== Profiling Functions ======
+    function startProfiling() {
+        const projectId = elements.gcpProjectId.value;
+        const tableIds = Array.from(selectedTables);
+
+        if (!projectId || tableIds.length === 0) {
+            showStatus('먼저 설정을 저장해주세요.', 'error');
+            return;
+        }
+
+        // Show progress section
+        elements.profilingProgress.classList.remove('hidden');
+        elements.profilingResults.classList.add('hidden');
+        elements.startProfilingButton.disabled = true;
+        elements.startProfilingButton.innerHTML = '<span>프로파일링 진행 중...</span>';
+
+        // Reset progress steps
+        document.querySelectorAll('.progress-step').forEach(step => {
+            step.classList.remove('completed', 'active');
+        });
+
+        // Clear log
+        elements.profilingLog.innerHTML = '<div>프로파일링 시작...</div>';
+
+        // Start EventSource for real-time updates
+        const queryParams = new URLSearchParams({
+            projectId: projectId,
+            tableIds: tableIds.join(',')
+        });
+
+        profilingEventSource = new EventSource(`/profiling?${queryParams}`);
+
+        profilingEventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            handleProfilingUpdate(data);
+        };
+
+        profilingEventSource.onerror = function(event) {
+            console.error('EventSource error:', event);
+            handleProfilingError('연결 오류가 발생했습니다.');
+        };
+    }
+
+    function handleProfilingUpdate(data) {
+        switch (data.type) {
+            case 'status':
+                updateProfilingStep(data.payload.step, data.payload.message);
+                break;
+            case 'log':
+                addProfilingLog(data.payload.message);
+                break;
+            case 'error':
+                handleProfilingError(data.payload.message);
+                break;
+            case 'metadata':
+                addProfilingLog('메타데이터 추출 완료');
+                break;
+            case 'report_section':
+                addProfilingLog(`${data.payload.title} 생성 완료`);
+                break;
+            case 'profiling_complete':
+                handleProfilingComplete(data.payload);
+                break;
+        }
+    }
+
+    function updateProfilingStep(step, message) {
+        elements.profilingStatusText.textContent = message;
+        
+        // Update step indicators
+        document.querySelectorAll('.progress-step').forEach((stepElement, index) => {
+            stepElement.classList.remove('active');
+            if (index < step) {
+                stepElement.classList.add('completed');
+            } else if (index === step) {
+                stepElement.classList.add('active');
+            }
+        });
+    }
+
+    function addProfilingLog(message) {
+        const timestamp = new Date().toLocaleTimeString();
+        const logEntry = document.createElement('div');
+        logEntry.textContent = `[${timestamp}] ${message}`;
+        elements.profilingLog.appendChild(logEntry);
+        elements.profilingLog.scrollTop = elements.profilingLog.scrollHeight;
+    }
+
+    function handleProfilingComplete(payload) {
+        currentProfileSession = payload.session_id;
+        
+        // Update UI
+        elements.startProfilingButton.disabled = false;
+        elements.startProfilingButton.innerHTML = '<span>프로파일링 시작</span>';
+        elements.profilingStatusText.textContent = '완료';
+        
+        // Show results
+        elements.profilingResults.classList.remove('hidden');
+        
+        // Display summary of the report
+        const report = payload.report;
+        if (report && report.sections) {
+            let summaryHtml = '<div class="space-y-3">';
+            
+            if (report.sections.overview) {
+                summaryHtml += `
+                    <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        <h5 class="font-medium text-blue-900 mb-1">📋 데이터셋 개요</h5>
+                        <p class="text-sm text-blue-800">${report.sections.overview.substring(0, 200)}...</p>
+                    </div>
+                `;
+            }
+            
+            summaryHtml += `
+                <div class="text-xs text-gray-500">
+                    생성된 섹션: ${Object.keys(report.sections).length}개 | 
+                    생성 시간: ${new Date(report.generated_at).toLocaleString()}
+                </div>
+            `;
+            summaryHtml += '</div>';
+            
+            elements.profilingResultsContent.innerHTML = summaryHtml;
+        }
+        
+        // Close EventSource
+        if (profilingEventSource) {
+            profilingEventSource.close();
+            profilingEventSource = null;
+        }
+        
+        addProfilingLog('프로파일링 완료! 결과를 확인하세요.');
+        
+        // Refresh profiles list
+        loadExistingProfiles();
+    }
+
+    function handleProfilingError(message) {
+        elements.startProfilingButton.disabled = false;
+        elements.startProfilingButton.innerHTML = '<span>프로파일링 시작</span>';
+        elements.profilingStatusText.textContent = '오류 발생';
+        
+        addProfilingLog(`❌ 오류: ${message}`);
+        
+        if (profilingEventSource) {
+            profilingEventSource.close();
+            profilingEventSource = null;
+        }
+        
+        showStatus(`프로파일링 실패: ${message}`, 'error');
+    }
+
+    function useCurrentProfile() {
+        if (!currentProfileSession) return;
+        
+        const projectId = elements.gcpProjectId.value;
+        const tableIds = Array.from(selectedTables);
+        
+        const profile = {
+            id: currentProfileSession,
+            projectId: projectId,
+            tableIds: tableIds
+        };
+        
+        localStorage.setItem('selectedProfile', JSON.stringify(profile));
+        window.dispatchEvent(new Event('contextChanged'));
+        
+        showStatus('✅ 프로파일이 선택되었습니다. 이제 채팅에서 분석을 시작할 수 있습니다!', 'success');
+        
+        // Auto redirect to chat after 2 seconds
+        setTimeout(() => {
+            window.location.href = '/';
+        }, 2000);
+    }
+
+    function viewFullReport() {
+        if (!currentProfileSession) return;
+        
+        // Open full report in new tab/window
+        window.open(`/profiling-history#${currentProfileSession}`, '_blank');
+    }
+
+    // ====== Profile Management Functions ======
+    async function loadExistingProfiles() {
+        try {
+            const response = await fetch('/logs?limit=50');
+            const profiles = await response.json();
+            
+            if (profiles.error) {
+                throw new Error(profiles.error);
+            }
+            
+            displayProfiles(profiles);
+        } catch (error) {
+            console.error('프로파일 로드 오류:', error);
+            elements.noProfilesMessage.classList.remove('hidden');
+        }
+    }
+
+    function displayProfiles(profiles) {
+        elements.profilesList.innerHTML = '';
+        
+        if (!profiles || profiles.length === 0) {
+            elements.noProfilesMessage.classList.remove('hidden');
+            return;
+        }
+        
+        elements.noProfilesMessage.classList.add('hidden');
+        
+        const selectedProfileJSON = localStorage.getItem('selectedProfile');
+        const selectedProfileId = selectedProfileJSON ? JSON.parse(selectedProfileJSON).id : null;
+        
+        const settingsJSON = localStorage.getItem('bigqueryAISettings');
+        const settings = settingsJSON ? JSON.parse(settingsJSON) : null;
+        const settingsTableIds = settings ? new Set(settings.tableIds.sort()) : null;
+
+        const areSetsEqual = (a, b) => {
+            if (!a || !b) return false;
+            if (a.size !== b.size) return false;
+            const sortedA = [...a].sort();
+            const sortedB = [...b].sort();
+            for (let i = 0; i < sortedA.length; i++) {
+                if (sortedA[i] !== sortedB[i]) return false;
+            }
+            return true;
+        };
+
+        profiles.forEach(profile => {
+            const isCurrentlySelected = profile.id === selectedProfileId;
+            let isSelectable = true;
+            let disabledReason = '';
+
+            if (settingsTableIds) {
+                const profileTableIds = new Set((profile.table_ids || []).sort());
+                if (!areSetsEqual(settingsTableIds, profileTableIds)) {
+                    isSelectable = false;
+                    disabledReason = '현재 프로젝트 설정과 테이블 구성이 다릅니다.';
+                }
+            }
+
+            const statusMapping = {
+                '완료': { class: 'badge-success', label: '완료' },
+                '실패': { class: 'badge-error', label: '실패' },
+                '진행 중': { class: 'badge-warning', label: '진행 중' }
+            };
+            const statusInfo = statusMapping[profile.status] || { class: 'badge-gray', label: profile.status };
+
+            const startTime = new Date(profile.start_time);
+            const endTime = profile.end_time ? new Date(profile.end_time) : null;
+            let duration = '진행 중';
+            if(endTime) {
+                const diffSeconds = ((endTime - startTime) / 1000);
+                duration = diffSeconds < 60 ? `${diffSeconds.toFixed(1)}초` : `${(diffSeconds / 60).toFixed(1)}분`;
+            }
+
+            const profileCard = document.createElement('div');
+            profileCard.className = `border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors ${
+                isCurrentlySelected ? 'bg-blue-50 border-blue-300' : ''
+            }`;
+            
+            profileCard.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-3 mb-2">
+                            <h4 class="font-medium text-gray-900">${profile.project_id}</h4>
+                            <span class="badge ${statusInfo.class}">${statusInfo.label}</span>
+                            ${isCurrentlySelected ? '<span class="badge badge-info">선택됨</span>' : ''}
+                        </div>
+                        <div class="text-sm text-gray-600 space-y-1">
+                            <div>테이블: ${(profile.table_ids || []).length}개</div>
+                            <div>생성: ${startTime.toLocaleString('ko-KR')} (${duration})</div>
+                            ${!isSelectable ? `<div class="text-orange-600 text-xs">${disabledReason}</div>` : ''}
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="btn btn-secondary text-xs" 
+                                onclick="viewProfileDetail('${profile.id}')"
+                                title="상세 보기">
+                            👁️
+                        </button>
+                        <button class="btn ${isCurrentlySelected ? 'btn-primary opacity-50 cursor-not-allowed' : 'btn-primary'} text-xs" 
+                                onclick="selectProfile('${profile.id}', '${profile.project_id}', '${JSON.stringify(profile.table_ids || []).replace(/"/g, '&quot;')}')"
+                                ${!isSelectable || isCurrentlySelected ? 'disabled' : ''}
+                                title="${isCurrentlySelected ? '이미 선택됨' : isSelectable ? '이 프로파일 선택' : disabledReason}">
+                            ${isCurrentlySelected ? '선택됨' : '선택'}
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            elements.profilesList.appendChild(profileCard);
+        });
+    }
+
+    function selectProfile(sessionId, projectId, tableIdsJson) {
+        const tableIds = JSON.parse(tableIdsJson.replace(/&quot;/g, '"'));
+        const profile = {
+            id: sessionId,
+            projectId: projectId,
+            tableIds: tableIds
+        };
+        
+        localStorage.setItem('selectedProfile', JSON.stringify(profile));
+        window.dispatchEvent(new Event('contextChanged'));
+        
+        showStatus('✅ 프로파일이 선택되었습니다!', 'success');
+        
+        // Refresh the display to show updated selection
+        loadExistingProfiles();
+    }
+
+    function viewProfileDetail(sessionId) {
+        window.open(`/profiling-history#${sessionId}`, '_blank');
+    }
+
+    // ====== Event Listeners ======
+    document.addEventListener('DOMContentLoaded', function() {
+        // Project settings events
+        elements.gcpProjectId.addEventListener('change', () => {
+            selectedTables.clear();
+            loadProjectTables();
+        });
+        
+        elements.saveSettingsButton.addEventListener('click', saveSettings);
+        
+        // Profiling events
+        elements.startProfilingButton.addEventListener('click', startProfiling);
+        elements.useProfileButton.addEventListener('click', useCurrentProfile);
+        elements.viewFullReportButton.addEventListener('click', viewFullReport);
+        
+        // Profile management events
+        elements.refreshProfilesButton.addEventListener('click', loadExistingProfiles);
+        
+        // Initialize page
+        loadGcpProjects();
+        loadExistingProfiles();
+        validateInputs();
+    });
+
+    // Initialize page if auth is already complete
     function initializePage() {
         loadGcpProjects();
+        loadExistingProfiles();
         validateInputs();
     }
 

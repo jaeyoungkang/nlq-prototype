@@ -1,6 +1,6 @@
 # api/routes.py
 """
-API 라우트 - 데이터 분석 관련 엔드포인트
+API 라우트 - 데이터 분석 관련 엔드포인트 (프로파일링 통합 개선)
 """
 
 import os
@@ -145,6 +145,187 @@ def analyze_context():
         }), 500
 
 
+@analysis_bp.route('/profiling')
+def run_profiling():
+    """통합 프로파일링 엔드포인트 (설정 페이지용 실시간 스트리밍)"""
+    if not integrated_analyzer:
+        def error_generator():
+            error_data = {
+                'type': 'error', 
+                'payload': {'message': '분석 엔진이 초기화되지 않았습니다.'}
+            }
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        return Response(error_generator(), mimetype='text/event-stream')
+    
+    # 요청 파라미터 검증 (GET 파라미터와 쿼리 파라미터 모두 지원)
+    project_id = request.args.get('projectId', '').strip()
+    table_ids_str = request.args.get('tableIds', '').strip()
+    
+    if not project_id or not table_ids_str:
+        def error_generator():
+            error_data = {
+                'type': 'error', 
+                'payload': {'message': 'projectId와 tableIds 파라미터가 필요합니다.'}
+            }
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        return Response(error_generator(), mimetype='text/event-stream')
+    
+    # 테이블 ID 파싱 및 검증
+    table_ids = [tid.strip() for tid in table_ids_str.replace('\n', ',').split(',') if tid.strip()]
+    validated_table_ids = validate_table_ids(table_ids)
+    
+    if not validated_table_ids:
+        def error_generator():
+            error_data = {
+                'type': 'error', 
+                'payload': {'message': '유효한 테이블 ID가 없습니다.'}
+            }
+            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+        return Response(error_generator(), mimetype='text/event-stream')
+    
+    def profiling_generator():
+        session_id = None
+        try:
+            # 세션 생성
+            session_data = {
+                "id": str(int(time.time() * 1000)),
+                "start_time": datetime.datetime.now().isoformat(),
+                "project_id": project_id,
+                "table_ids": validated_table_ids,
+                "status": "진행 중"
+            }
+            session_id = db_manager.create_analysis_session(session_data)
+            
+            # 시작 상태 전송
+            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 0, 'message': '메타데이터 추출 시작...', 'session_id': session_id}}, ensure_ascii=False)}\n\n"
+            
+            # 1단계: 메타데이터 추출
+            yield f"data: {json.dumps({'type': 'log', 'payload': {'message': f'대상 테이블 {len(validated_table_ids)}개 분석 시작'}}, ensure_ascii=False)}\n\n"
+            
+            metadata = integrated_analyzer.metadata_extractor.extract_metadata(project_id, validated_table_ids)
+            
+            # 스키마 정보 등록
+            register_extracted_metadata(project_id, metadata)
+            
+            # 메타데이터 추출 완료 상태
+            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 1, 'message': '메타데이터 추출 완료'}}, ensure_ascii=False)}\n\n"
+            
+            # 메타데이터 전송
+            yield f"data: {json.dumps({'type': 'metadata', 'payload': safe_json_serialize(metadata)}, ensure_ascii=False)}\n\n"
+            
+            # 2단계: 프로파일링 리포트 생성
+            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 2, 'message': '데이터 프로파일링 리포트 생성 중...'}}, ensure_ascii=False)}\n\n"
+            
+            # 프로파일링 시스템 프롬프트
+            profiling_prompt = get_profiling_system_prompt()
+            
+            # 메타데이터를 기반으로 프로파일링 수행
+            metadata_summary = f"""
+다음은 추출된 BigQuery 테이블 메타데이터입니다:
+
+프로젝트 ID: {project_id}
+분석 대상 테이블: {len(validated_table_ids)}개
+
+{json.dumps(metadata, indent=2, ensure_ascii=False, default=str)}
+"""
+            
+            # 섹션별 프로파일링 수행
+            sections = [
+                ("overview", "데이터셋 개요 분석 중...", "개요"),
+                ("table_analysis", "테이블 상세 분석 중...", "테이블 상세 분석"),
+                ("relationships", "테이블 관계 추론 중...", "테이블 간 관계"),
+                ("business_questions", "비즈니스 질문 도출 중...", "분석 가능 질문"),
+                ("recommendations", "활용 권장사항 도출 중...", "권장사항")
+            ]
+            
+            profiling_report = {
+                "sections": {},
+                "full_report": "",
+                "generated_at": datetime.datetime.now().isoformat()
+            }
+            
+            for i, (section_key, section_message, section_title) in enumerate(sections):
+                # 섹션 진행 상태 전송
+                yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 2, 'message': section_message}}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'log', 'payload': {'message': section_message}}, ensure_ascii=False)}\n\n"
+                
+                section_prompt = f"{profiling_prompt}\n\n{metadata_summary}\n\n위 메타데이터를 분석하여 '{section_title}' 섹션을 작성해주세요."
+                
+                try:
+                    response = integrated_analyzer.anthropic_client.messages.create(
+                        model="claude-3-5-sonnet-20241022",
+                        max_tokens=2000,
+                        messages=[
+                            {"role": "user", "content": section_prompt}
+                        ]
+                    )
+                    
+                    section_content = response.content[0].text.strip()
+                    profiling_report["sections"][section_key] = section_content
+                    
+                    # 섹션별 실시간 스트리밍
+                    yield f"data: {json.dumps({'type': 'report_section', 'payload': {'section': section_key, 'title': section_title, 'content': section_content}}, ensure_ascii=False)}\n\n"
+                    
+                    time.sleep(0.2)  # 각 섹션 간 짧은 대기
+                    
+                except Exception as e:
+                    error_message = f'{section_title} 생성 중 오류: {str(e)}'
+                    yield f"data: {json.dumps({'type': 'log', 'payload': {'message': error_message}}, ensure_ascii=False)}\n\n"
+                    profiling_report["sections"][section_key] = f"섹션 생성 실패: {str(e)}"
+            
+            # 전체 리포트 조합
+            full_report_parts = ["# 📊 BigQuery 데이터 프로파일링 리포트\n"]
+            section_titles = {
+                "overview": "## 1. 📋 데이터셋 개요",
+                "table_analysis": "## 2. 🔍 테이블 상세 분석",
+                "relationships": "## 3. 🔗 테이블 간 관계",
+                "business_questions": "## 4. ❓ 분석 가능 질문",
+                "recommendations": "## 5. 💡 활용 권장사항"
+            }
+            
+            for section_key in ["overview", "table_analysis", "relationships", "business_questions", "recommendations"]:
+                if section_key in profiling_report["sections"]:
+                    full_report_parts.append(f"{section_titles[section_key]}\n{profiling_report['sections'][section_key]}\n")
+            
+            profiling_report["full_report"] = "\n".join(full_report_parts)
+            
+            # 3단계: 결과 저장
+            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 3, 'message': '결과 저장 중...'}}, ensure_ascii=False)}\n\n"
+            
+            # Firestore에 프로파일링 결과 저장
+            db_manager.save_analysis_result(session_id, 'profiling_report', profiling_report)
+            
+            # 세션 완료 처리
+            db_manager.update_session_status(session_id, "완료")
+            
+            # 완료 상태 전송
+            yield f"data: {json.dumps({'type': 'status', 'payload': {'step': 4, 'message': '프로파일링 완료', 'session_id': session_id}}, ensure_ascii=False)}\n\n"
+            
+            # 최종 완료 데이터 전송
+            yield f"data: {json.dumps({'type': 'profiling_complete', 'payload': {'session_id': session_id, 'report': profiling_report}}, ensure_ascii=False)}\n\n"
+            
+        except Exception as e:
+            logger.error(f"프로파일링 중 오류: {e}")
+            
+            # 세션 실패 처리
+            if session_id:
+                db_manager.update_session_status(session_id, "실패", str(e))
+            
+            # 오류 전송
+            yield f"data: {json.dumps({'type': 'error', 'payload': {'message': str(e)}}, ensure_ascii=False)}\n\n"
+    
+    return Response(
+        profiling_generator(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Cache-Control'
+        }
+    )
+
+
 @analysis_bp.route('/analyze', methods=['POST'])
 def structured_analysis():
     """구조화된 분석 - 차트와 분석 리포트 포함"""
@@ -229,332 +410,6 @@ def structured_analysis():
             "error": f"서버 오류: {str(e)}",
             "mode": "structured"
         }), 500
-
-
-@analysis_bp.route('/creative-html', methods=['POST'])
-def creative_html_analysis():
-    """창의적 HTML 분석 - Claude가 완전한 HTML 생성"""
-    try:
-        if not integrated_analyzer:
-            return jsonify({
-                "success": False,
-                "error": "분석 엔진이 초기화되지 않았습니다.",
-                "mode": "creative_html"
-            }), 500
-
-        if not request.json or 'question' not in request.json:
-            return jsonify({
-                "success": False,
-                "error": "요청 본문에 'question' 필드가 필요합니다.",
-                "mode": "creative_html"
-            }), 400
-
-        question = request.json['question'].strip()
-        project_id = request.json.get('project_id', '').strip()
-        table_ids = request.json.get('table_ids', [])
-        
-        # 테이블 ID 정제
-        if isinstance(table_ids, str):
-            table_ids = [tid.strip() for tid in table_ids.replace('\n', ',').split(',') if tid.strip()]
-        
-        # 입력 검증
-        if not question:
-            return jsonify({
-                "success": False,
-                "error": "질문이 비어있습니다.",
-                "mode": "creative_html"
-            }), 400
-        
-        if not project_id or not table_ids:
-            return jsonify({
-                "success": False,
-                "error": "project_id와 table_ids가 필요합니다.",
-                "mode": "creative_html"
-            }), 400
-        
-        # SQL 생성 및 데이터 조회
-        sql_query = integrated_analyzer.natural_language_to_sql(question, project_id, table_ids)
-        query_result = integrated_analyzer.execute_bigquery(sql_query)
-        
-        if not query_result["success"]:
-            return jsonify({
-                "success": False,
-                "error": query_result["error"],
-                "mode": "creative_html",
-                "original_question": question,
-                "generated_sql": sql_query,
-                "error_type": query_result.get("error_type", "unknown")
-            }), 500
-        
-        # HTML 리포트 생성
-        html_result = integrated_analyzer.generate_html_report(
-            question, 
-            sql_query, 
-            query_result["data"]
-        )
-        
-        return jsonify({
-            "success": True,
-            "mode": "creative_html",
-            "original_question": question,
-            "generated_sql": sql_query,
-            "row_count": query_result.get("row_count", 0),
-            "execution_stats": query_result.get("job_stats", {}),
-            "html_content": html_result["html_content"],
-            "quality_score": html_result["quality_score"],
-            "attempts": html_result["attempts"],
-            "is_fallback": html_result.get("fallback", False)
-        })
-        
-    except Exception as e:
-        logger.error(f"창의적 HTML 분석 중 오류: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": f"서버 오류: {str(e)}",
-            "mode": "creative_html"
-        }), 500
-
-
-@analysis_bp.route('/profiling')
-def run_profiling():
-    """메타데이터 프로파일링 (실시간 스트리밍)"""
-    if not integrated_analyzer:
-        def error_generator():
-            error_data = {
-                'type': 'error', 
-                'payload': {'message': '분석 엔진이 초기화되지 않았습니다.'}
-            }
-            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-        return Response(error_generator(), mimetype='text/event-stream')
-    
-    # 요청 파라미터 검증
-    project_id = request.args.get('projectId', '').strip()
-    table_ids_str = request.args.get('tableIds', '').strip()
-    
-    if not project_id or not table_ids_str:
-        def error_generator():
-            error_data = {
-                'type': 'error', 
-                'payload': {'message': 'Project ID와 Table IDs가 필요합니다.'}
-            }
-            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-        return Response(error_generator(), mimetype='text/event-stream')
-    
-    # 테이블 ID 파싱 및 검증
-    table_ids = [tid.strip() for tid in table_ids_str.replace('\n', ',').split(',') if tid.strip()]
-    validated_table_ids = validate_table_ids(table_ids)
-    
-    if not validated_table_ids:
-        def error_generator():
-            error_data = {
-                'type': 'error', 
-                'payload': {'message': '유효한 테이블 ID가 없습니다.'}
-            }
-            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-        return Response(error_generator(), mimetype='text/event-stream')
-    
-    def profiling_generator():
-        session_id = None
-        try:
-            # 세션 생성
-            session_data = {
-                "id": str(int(time.time() * 1000)),
-                "start_time": datetime.datetime.now().isoformat(),
-                "project_id": project_id,
-                "table_ids": validated_table_ids,
-                "status": "진행 중"
-            }
-            session_id = db_manager.create_analysis_session(session_data)
-            
-            # 시작 상태 전송
-            start_status = {
-                'type': 'status', 
-                'payload': {
-                    'step': 0, 
-                    'message': '메타데이터 추출 시작...', 
-                    'session_id': session_id
-                }
-            }
-            yield f"data: {json.dumps(start_status, ensure_ascii=False)}\n\n"
-            
-            # 1단계: 메타데이터 추출
-            log_data = {
-                'type': 'log', 
-                'payload': {'message': f'대상 테이블 {len(validated_table_ids)}개 분석 시작'}
-            }
-            yield f"data: {json.dumps(log_data, ensure_ascii=False)}\n\n"
-            
-            metadata = integrated_analyzer.metadata_extractor.extract_metadata(project_id, validated_table_ids)
-            
-            # 스키마 정보 등록
-            register_extracted_metadata(project_id, metadata)
-            
-            # 메타데이터 추출 완료 상태
-            meta_complete_status = {
-                'type': 'status', 
-                'payload': {'step': 1, 'message': '메타데이터 추출 완료'}
-            }
-            yield f"data: {json.dumps(meta_complete_status, ensure_ascii=False)}\n\n"
-            
-            # 메타데이터 전송
-            metadata_data = {
-                'type': 'metadata', 
-                'payload': safe_json_serialize(metadata)
-            }
-            yield f"data: {json.dumps(metadata_data, ensure_ascii=False)}\n\n"
-            
-            # 2단계: 프로파일링 리포트 생성
-            profiling_status = {
-                'type': 'status', 
-                'payload': {'step': 2, 'message': '데이터 프로파일링 리포트 생성 중...'}
-            }
-            yield f"data: {json.dumps(profiling_status, ensure_ascii=False)}\n\n"
-            
-            # 프로파일링 시스템 프롬프트
-            profiling_prompt = get_profiling_system_prompt()
-            
-            # 메타데이터를 기반으로 프로파일링 수행
-            metadata_summary = f"""
-다음은 추출된 BigQuery 테이블 메타데이터입니다:
-
-프로젝트 ID: {project_id}
-분석 대상 테이블: {len(validated_table_ids)}개
-
-{json.dumps(metadata, indent=2, ensure_ascii=False, default=str)}
-"""
-            
-            # 섹션별 프로파일링 수행
-            sections = [
-                ("overview", "데이터셋 개요 분석 중...", "개요"),
-                ("table_analysis", "테이블 상세 분석 중...", "테이블 상세 분석"),
-                ("relationships", "테이블 관계 추론 중...", "테이블 간 관계"),
-                ("business_questions", "비즈니스 질문 도출 중...", "분석 가능 질문"),
-                ("recommendations", "활용 권장사항 도출 중...", "권장사항")
-            ]
-            
-            profiling_report = {
-                "sections": {},
-                "full_report": "",
-                "generated_at": datetime.datetime.now().isoformat()
-            }
-            
-            for section_key, section_message, section_title in sections:
-                # 섹션 진행 상태 전송
-                section_log = {
-                    'type': 'log', 
-                    'payload': {'message': section_message}
-                }
-                yield f"data: {json.dumps(section_log, ensure_ascii=False)}\n\n"
-                
-                section_prompt = f"{profiling_prompt}\n\n{metadata_summary}\n\n위 메타데이터를 분석하여 '{section_title}' 섹션을 작성해주세요."
-                
-                try:
-                    response = integrated_analyzer.anthropic_client.messages.create(
-                        model="claude-3-5-sonnet-20241022",
-                        max_tokens=2000,
-                        messages=[
-                            {"role": "user", "content": section_prompt}
-                        ]
-                    )
-                    
-                    section_content = response.content[0].text.strip()
-                    profiling_report["sections"][section_key] = section_content
-                    
-                    # 섹션별 실시간 스트리밍
-                    section_data = {
-                        'type': 'report_section', 
-                        'payload': {
-                            'section': section_key, 
-                            'title': section_title, 
-                            'content': section_content
-                        }
-                    }
-                    yield f"data: {json.dumps(section_data, ensure_ascii=False)}\n\n"
-                    
-                    time.sleep(0.2)  # 각 섹션 간 짧은 대기
-                    
-                except Exception as e:
-                    error_message = f'{section_title} 생성 중 오류: {str(e)}'
-                    error_log = {
-                        'type': 'log', 
-                        'payload': {'message': error_message}
-                    }
-                    yield f"data: {json.dumps(error_log, ensure_ascii=False)}\n\n"
-                    profiling_report["sections"][section_key] = f"섹션 생성 실패: {str(e)}"
-            
-            # 전체 리포트 조합
-            full_report_parts = ["# 📊 BigQuery 데이터 프로파일링 리포트\n"]
-            section_titles = {
-                "overview": "## 1. 📋 데이터셋 개요",
-                "table_analysis": "## 2. 🔍 테이블 상세 분석",
-                "relationships": "## 3. 🔗 테이블 간 관계",
-                "business_questions": "## 4. ❓ 분석 가능 질문",
-                "recommendations": "## 5. 💡 활용 권장사항"
-            }
-            
-            for section_key in ["overview", "table_analysis", "relationships", "business_questions", "recommendations"]:
-                if section_key in profiling_report["sections"]:
-                    full_report_parts.append(f"{section_titles[section_key]}\n{profiling_report['sections'][section_key]}\n")
-            
-            profiling_report["full_report"] = "\n".join(full_report_parts)
-            
-            # 3단계: 결과 저장
-            save_status = {
-                'type': 'status', 
-                'payload': {'step': 3, 'message': '결과 저장 중...'}
-            }
-            yield f"data: {json.dumps(save_status, ensure_ascii=False)}\n\n"
-            
-            # Firestore에 프로파일링 결과 저장
-            db_manager.save_analysis_result(session_id, 'profiling_report', profiling_report)
-            
-            # 세션 완료 처리
-            db_manager.update_session_status(session_id, "완료")
-            
-            # 완료 상태 전송
-            complete_status = {
-                'type': 'status', 
-                'payload': {
-                    'step': 4, 
-                    'message': '프로파일링 완료', 
-                    'session_id': session_id
-                }
-            }
-            yield f"data: {json.dumps(complete_status, ensure_ascii=False)}\n\n"
-            
-            # 최종 완료 데이터 전송
-            complete_data = {
-                'type': 'profiling_complete', 
-                'payload': {
-                    'session_id': session_id, 
-                    'report': profiling_report
-                }
-            }
-            yield f"data: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
-            
-        except Exception as e:
-            logger.error(f"프로파일링 중 오류: {e}")
-            
-            # 세션 실패 처리
-            if session_id:
-                db_manager.update_session_status(session_id, "실패", str(e))
-            
-            # 오류 전송
-            error_data = {
-                'type': 'error', 
-                'payload': {'message': str(e)}
-            }
-            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-    
-    return Response(
-        profiling_generator(),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Access-Control-Allow-Origin': '*'
-        }
-    )
 
 
 @analysis_bp.route('/validate-query', methods=['POST'])

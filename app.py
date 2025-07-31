@@ -1,6 +1,6 @@
-# app.py - 메인 애플리케이션 (안전한 Blueprint 등록)
+# app.py - 메인 애플리케이션 (통합 프로파일링 지원)
 """
-BigQuery AI Assistant - 메인 애플리케이션
+BigQuery AI Assistant - 메인 애플리케이션 (프로파일링 통합 버전)
 """
 
 import os
@@ -14,7 +14,7 @@ from flask_cors import CORS
 import anthropic
 from google.cloud import bigquery
 
-# 기존 모듈들 임포트 (임시로 유지)
+# 기존 모듈들 임포트
 from firestore_db import db_manager
 
 # 새로운 모듈들 안전하게 임포트
@@ -79,7 +79,11 @@ logger = logging.getLogger(__name__)
 
 # Flask 웹 애플리케이션 초기화
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000"])  # 프론트엔드 URL 허용
+CORS(app, 
+     origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+     allow_headers=["Content-Type", "Cache-Control"],
+     expose_headers=["Cache-Control"],
+     supports_credentials=False)
 
 # --- 글로벌 클라이언트 초기화 ---
 
@@ -202,33 +206,136 @@ if not WEB_ROUTES_AVAILABLE:
             from flask import render_template
             return render_template('profiling.html')
         except Exception as e:
-            return f"<html><body><h1>Profiling</h1><p>Error: {str(e)}</p></body></html>"
+            return f"<html><body><h1>Profile Library</h1><p>Error: {str(e)}</p></body></html>"
 
 # --- 유틸리티 라우트 ---
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """헬스 체크 엔드포인트"""
+    """헬스 체크 엔드포인트 (확장된 정보)"""
+    
+    # 서비스 상태 체크
+    services_status = {
+        "anthropic": {
+            "configured": bool(ANTHROPIC_API_KEY),
+            "initialized": bool(anthropic_client),
+            "status": "healthy" if anthropic_client else "unavailable"
+        },
+        "bigquery": {
+            "configured": bool(bigquery_client),
+            "project": bigquery_client.project if bigquery_client else None,
+            "status": "healthy" if bigquery_client else "unavailable"
+        },
+        "firestore": {
+            "configured": bool(db_manager.db),
+            "status": "healthy" if db_manager.db else "unavailable"
+        }
+    }
+    
+    # 모듈 가용성
+    modules_status = {
+        "core": CORE_AVAILABLE,
+        "analysis_routes": ANALYSIS_ROUTES_AVAILABLE,
+        "gcp_routes": GCP_ROUTES_AVAILABLE,
+        "session_routes": SESSION_ROUTES_AVAILABLE,
+        "web_routes": WEB_ROUTES_AVAILABLE
+    }
+    
+    # 전체 시스템 상태 결정
+    all_critical_services_ok = (
+        services_status["anthropic"]["status"] == "healthy" and
+        services_status["bigquery"]["status"] == "healthy" and
+        services_status["firestore"]["status"] == "healthy"
+    )
+    
+    overall_status = "healthy" if all_critical_services_ok else "degraded"
+    
+    # 지원되는 기능 목록
+    supported_features = []
+    if integrated_analyzer:
+        supported_features.extend(["quick_query", "structured_analysis", "contextual_analysis"])
+    if GCP_ROUTES_AVAILABLE:
+        supported_features.extend(["project_management", "table_discovery"])
+    if SESSION_ROUTES_AVAILABLE:
+        supported_features.extend(["profiling", "session_management", "profile_library"])
+    
     return jsonify({
-        "status": "healthy",
+        "status": overall_status,
         "timestamp": datetime.datetime.now().isoformat(),
-        "services": {
-            "anthropic": "configured" if ANTHROPIC_API_KEY else "not configured",
-            "bigquery": "configured" if bigquery_client else "not configured",
-            "firestore": "configured" if db_manager.db else "not configured"
-        },
-        "modules": {
-            "core": CORE_AVAILABLE,
-            "analysis_routes": ANALYSIS_ROUTES_AVAILABLE,
-            "gcp_routes": GCP_ROUTES_AVAILABLE,
-            "session_routes": SESSION_ROUTES_AVAILABLE,
-            "web_routes": WEB_ROUTES_AVAILABLE
-        },
+        "version": "2.1.0-integrated-profiling",
+        "services": services_status,
+        "modules": modules_status,
         "registered_blueprints": registered_blueprints,
         "integrated_analyzer": "initialized" if integrated_analyzer else "not initialized",
-        "supported_modes": ["quick", "analyze", "creative_html"] if integrated_analyzer else [],
-        "version": "2.0.0-safe-modular"
+        "supported_features": supported_features,
+        "feature_flags": {
+            "real_time_profiling": True,
+            "profile_library": SESSION_ROUTES_AVAILABLE,
+            "advanced_analytics": ANALYSIS_ROUTES_AVAILABLE and bool(integrated_analyzer),
+            "multi_project_support": GCP_ROUTES_AVAILABLE
+        }
     })
+
+@app.route('/api/system/status', methods=['GET'])
+def system_status():
+    """시스템 상태 상세 정보"""
+    try:
+        # Firestore 통계
+        firestore_stats = {}
+        if db_manager.db:
+            try:
+                stats = db_manager.get_project_stats()
+                firestore_stats = {
+                    "total_profiles": stats.get('total_sessions', 0),
+                    "completed_profiles": stats.get('completed_sessions', 0),
+                    "success_rate": stats.get('success_rate', 0),
+                    "avg_quality_score": stats.get('avg_quality_score', 0)
+                }
+            except Exception as e:
+                firestore_stats = {"error": str(e)}
+        
+        # BigQuery 연결 테스트
+        bigquery_test = {"status": "unknown"}
+        if bigquery_client:
+            try:
+                # 간단한 쿼리로 연결 테스트
+                query_job = bigquery_client.query("SELECT 1 as test", 
+                                                 job_config=bigquery.QueryJobConfig(dry_run=True))
+                bigquery_test = {
+                    "status": "healthy",
+                    "project": bigquery_client.project,
+                    "location": bigquery_client.location or "US"
+                }
+            except Exception as e:
+                bigquery_test = {
+                    "status": "error",
+                    "error": str(e)
+                }
+        
+        return jsonify({
+            "system_health": {
+                "overall": "healthy" if all([anthropic_client, bigquery_client, db_manager.db]) else "degraded",
+                "components": {
+                    "anthropic": "healthy" if anthropic_client else "unavailable",
+                    "bigquery": bigquery_test["status"],
+                    "firestore": "healthy" if db_manager.db else "unavailable"
+                }
+            },
+            "statistics": firestore_stats,
+            "bigquery_info": bigquery_test,
+            "memory_usage": {
+                "registered_blueprints": len(registered_blueprints),
+                "available_modules": sum([CORE_AVAILABLE, ANALYSIS_ROUTES_AVAILABLE, 
+                                        GCP_ROUTES_AVAILABLE, SESSION_ROUTES_AVAILABLE, WEB_ROUTES_AVAILABLE])
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"시스템 상태 확인 중 오류: {e}")
+        return jsonify({
+            "error": "시스템 상태를 확인할 수 없습니다",
+            "details": str(e)
+        }), 500
 
 # --- 오류 핸들러 ---
 
@@ -237,7 +344,8 @@ def not_found(error):
     return jsonify({
         "success": False,
         "error": "엔드포인트를 찾을 수 없습니다.",
-        "available_blueprints": registered_blueprints
+        "available_blueprints": registered_blueprints,
+        "suggestion": "사용 가능한 엔드포인트를 확인하려면 /health를 방문하세요."
     }), 404
 
 @app.errorhandler(500)
@@ -245,17 +353,26 @@ def internal_error(error):
     logger.error(f"내부 서버 오류: {error}")
     return jsonify({
         "success": False,
-        "error": "내부 서버 오류가 발생했습니다."
+        "error": "내부 서버 오류가 발생했습니다.",
+        "timestamp": datetime.datetime.now().isoformat()
     }), 500
+
+@app.errorhandler(403)
+def forbidden(error):
+    return jsonify({
+        "success": False,
+        "error": "접근이 거부되었습니다.",
+        "suggestion": "GCP 인증 상태를 확인하세요."
+    }), 403
 
 # --- 메인 실행 ---
 
 if __name__ == '__main__':
-    logger.info("=== BigQuery AI Assistant 서버 시작 ===")
-    logger.info(f"Anthropic API 상태: {'사용 가능' if anthropic_client else '사용 불가'}")
-    logger.info(f"BigQuery 상태: {'사용 가능' if bigquery_client else '사용 불가'}")
-    logger.info(f"Firestore 상태: {'사용 가능' if db_manager.db else '사용 불가'}")
-    logger.info(f"통합 분석기 상태: {'사용 가능' if integrated_analyzer else '사용 불가'}")
+    logger.info("=== BigQuery AI Assistant 서버 시작 (통합 프로파일링 버전) ===")
+    logger.info(f"Anthropic API 상태: {'✅ 사용 가능' if anthropic_client else '❌ 사용 불가'}")
+    logger.info(f"BigQuery 상태: {'✅ 사용 가능' if bigquery_client else '❌ 사용 불가'}")
+    logger.info(f"Firestore 상태: {'✅ 사용 가능' if db_manager.db else '❌ 사용 불가'}")
+    logger.info(f"통합 분석기 상태: {'✅ 사용 가능' if integrated_analyzer else '❌ 사용 불가'}")
     
     logger.info("모듈 가용성:")
     logger.info(f"  ├── Core: {'✅' if CORE_AVAILABLE else '❌'}")
@@ -266,7 +383,24 @@ if __name__ == '__main__':
     
     logger.info(f"등록된 Blueprint: {', '.join(registered_blueprints) if registered_blueprints else 'None'}")
     
+    # 지원되는 기능 요약
+    features = []
+    if integrated_analyzer:
+        features.append("🤖 AI 분석")
+    if GCP_ROUTES_AVAILABLE:
+        features.append("☁️ GCP 연동")
+    if SESSION_ROUTES_AVAILABLE:
+        features.append("📊 프로파일링")
+    if WEB_ROUTES_AVAILABLE:
+        features.append("🌐 웹 인터페이스")
+    
+    logger.info(f"지원 기능: {' | '.join(features) if features else '기본 기능만'}")
+    
     # Cloud Run에서는 PORT 환경변수 사용
     port = int(os.getenv('PORT', 8080))
+    debug_mode = os.getenv('FLASK_ENV') == 'development'
+    
     logger.info(f"서버 시작: http://0.0.0.0:{port}")
-    app.run(debug=False, host='0.0.0.0', port=port)
+    logger.info(f"디버그 모드: {'ON' if debug_mode else 'OFF'}")
+    
+    app.run(debug=debug_mode, host='0.0.0.0', port=port)
