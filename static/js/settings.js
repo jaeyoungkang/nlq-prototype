@@ -1,0 +1,333 @@
+
+
+let currentSettings = { projectId: null, tableIds: [] };
+let isFirstMessage = true;
+
+const elements = {
+    contextStatus: document.getElementById('contextStatus'),
+    contextStatusDot: document.getElementById('context-status-dot'),
+    messagesContainer: document.getElementById('messagesContainer'),
+    chatInput: document.getElementById('chatInput'),
+    sendButton: document.getElementById('sendButton'),
+    quickSuggestions: document.getElementById('quickSuggestions'),
+};
+
+function checkContextAndSetUIState() {
+    const savedSettings = localStorage.getItem('bigqueryAISettings');
+    const savedProfile = localStorage.getItem('selectedProfile');
+    let context = null;
+    
+    if (savedProfile) {
+        const profile = JSON.parse(savedProfile);
+        if (profile.id && profile.projectId && profile.tableIds && profile.tableIds.length > 0) {
+            context = { projectId: profile.projectId, tableIds: profile.tableIds };
+            elements.contextStatus.textContent = `프로파일: ${profile.id.substring(0, 8)}...`;
+        }
+    }
+    
+    if (!context && savedSettings) {
+        const settings = JSON.parse(savedSettings);
+        if (settings.projectId && settings.tableIds && settings.tableIds.length > 0) {
+            context = settings;
+            elements.contextStatus.textContent = `프로젝트: ${settings.projectId}`;
+        }
+    }
+    
+    if (context) {
+        currentSettings = context;
+        elements.chatInput.disabled = false;
+        elements.sendButton.disabled = false;
+        elements.contextStatusDot.classList.add('active');
+        if (isFirstMessage) showWelcomeMessage();
+    } else {
+        currentSettings = { projectId: null, tableIds: [] };
+        elements.chatInput.disabled = true;
+        elements.sendButton.disabled = true;
+        elements.contextStatusDot.classList.remove('active');
+        elements.contextStatus.textContent = '설정 필요';
+        showSettingsNeededMessage();
+    }
+}
+
+function showWelcomeMessage() {
+    elements.messagesContainer.innerHTML = `
+        <div class="welcome-container">
+            <div class="welcome-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+                </svg>
+            </div>
+            <h2 class="welcome-title">무엇을 도와드릴까요?</h2>
+            <p class="welcome-subtitle">
+                BigQuery 데이터에 대해 자연어로 질문해보세요.<br>
+                테이블 구조, 데이터 분석, 트렌드 등 무엇이든 물어보세요.
+            </p>
+        </div>`;
+    elements.quickSuggestions.classList.remove('hidden');
+}
+
+function showSettingsNeededMessage() {
+    elements.messagesContainer.innerHTML = `
+        <div class="welcome-container">
+            <div class="welcome-icon" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </div>
+            <h2 class="welcome-title">설정이 필요합니다</h2>
+            <p class="welcome-subtitle">
+                좌측 메뉴의 <a href="/settings" class="text-orange-600 font-semibold hover:underline">프로젝트 설정</a>으로 이동하여<br>
+                BigQuery 프로젝트를 선택하고 프로파일링을 완료해주세요.
+            </p>
+            <div class="mt-6">
+                <a href="/settings" class="btn btn-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span>프로젝트 설정하러 가기</span>
+                </a>
+            </div>
+        </div>`;
+    elements.quickSuggestions.classList.add('hidden');
+}
+
+function insertQuickQuestion(question) {
+    elements.chatInput.value = question;
+    elements.chatInput.focus();
+    autoResizeTextarea();
+}
+
+function addMessage(content, isUser = false, type = 'text', context = null) {
+    if (isFirstMessage && type !== 'loading') {
+        elements.messagesContainer.innerHTML = '';
+        elements.quickSuggestions.classList.add('hidden');
+        isFirstMessage = false;
+    }
+    
+    const messageWrapper = document.createElement('div');
+    messageWrapper.className = 'message-bubble';
+    
+    const messageContainer = document.createElement('div');
+    messageContainer.className = `message-wrapper ${isUser ? 'user' : ''}`;
+    
+    // Avatar
+    const avatar = document.createElement('div');
+    avatar.className = `message-avatar ${isUser ? 'user' : 'assistant'}`;
+    avatar.textContent = isUser ? 'U' : 'AI';
+    
+    // Content
+    const contentContainer = document.createElement('div');
+    contentContainer.className = 'message-content';
+    
+    const messageDiv = document.createElement('div');
+    
+    if (type === 'loading') {
+        messageDiv.className = 'message-text loading';
+        messageDiv.innerHTML = `
+            <span>분석 중</span>
+            <div class="loading-dots">
+                <div class="loading-dot"></div>
+                <div class="loading-dot"></div>
+                <div class="loading-dot"></div>
+            </div>`;
+    } else {
+        messageDiv.className = `message-text ${isUser ? 'user' : 'assistant'}`;
+        
+        if (type === 'markdown') {
+            messageDiv.innerHTML = marked.parse(content, { gfm: true, breaks: true });
+        } else if (type === 'data_result') {
+            messageDiv.innerHTML = formatDataResult(content);
+        } else {
+            messageDiv.textContent = content;
+        }
+    }
+    
+    contentContainer.appendChild(messageDiv);
+
+    // Analysis menu for data results
+    if (!isUser && type === 'data_result' && context) {
+        const menu = createAnalysisMenu(context);
+        contentContainer.appendChild(menu);
+    }
+
+    messageContainer.appendChild(avatar);
+    messageContainer.appendChild(contentContainer);
+    messageWrapper.appendChild(messageContainer);
+    elements.messagesContainer.appendChild(messageWrapper);
+    
+    // Scroll to bottom
+    const messagesArea = document.getElementById('messagesArea');
+    messagesArea.scrollTop = messagesArea.scrollHeight;
+    
+    return messageWrapper;
+}
+
+function formatDataResult(content) {
+    return `<div class="prose max-w-none">${marked.parse(content, { gfm: true, breaks: true })}</div>`;
+}
+
+function createAnalysisMenu(context) {
+    const menuContainer = document.createElement('div');
+    menuContainer.className = 'analysis-menu';
+    
+    const menuTitle = document.createElement('div');
+    menuTitle.className = 'analysis-menu-title';
+    menuTitle.textContent = '🔍 추가 분석';
+    
+    const buttonsContainer = document.createElement('div');
+    buttonsContainer.className = 'analysis-buttons';
+    
+    const menuItems = [
+        { text: '📊 결과 데이터 해설', type: 'explanation' },
+        { text: '🔍 컨텍스트 연계 분석', type: 'context' },
+        { text: '💡 추가 분석 제안', type: 'suggestion' }
+    ];
+    
+    menuItems.forEach(item => {
+        const button = document.createElement('button');
+        button.className = 'analysis-button';
+        button.textContent = item.text;
+        button.onclick = () => handleAnalysisRequest(item.type, context, menuContainer);
+        buttonsContainer.appendChild(button);
+    });
+    
+    menuContainer.appendChild(menuTitle);
+    menuContainer.appendChild(buttonsContainer);
+    return menuContainer;
+}
+
+async function handleAnalysisRequest(analysisType, context, menuContainer) {
+    // Disable buttons
+    const buttons = menuContainer.querySelectorAll('.analysis-button');
+    buttons.forEach(btn => btn.disabled = true);
+    
+    const loadingMessage = addMessage('', false, 'loading');
+    
+    try {
+        const response = await fetch('/analyze-context', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...context, analysis_type: analysisType }),
+        });
+        
+        const result = await response.json();
+        
+        if (!result.success) {
+            throw new Error(result.error);
+        }
+        
+        addMessage(result.analysis, false, 'markdown');
+    } catch (error) {
+        addMessage(`**분석 오류:**\n${error.message}`, false, 'markdown');
+    } finally {
+        loadingMessage.remove();
+        buttons.forEach(btn => btn.disabled = false);
+    }
+}
+
+async function sendMessage() {
+    const question = elements.chatInput.value.trim();
+    if (!question) return;
+    
+    // Add user message
+    addMessage(question, true, 'text');
+    
+    // Reset input
+    elements.chatInput.value = '';
+    autoResizeTextarea();
+    elements.chatInput.disabled = true;
+    elements.sendButton.disabled = true;
+    
+    const loadingMessage = addMessage('', false, 'loading');
+    
+    try {
+        const response = await fetch('/quick', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                question: question, 
+                project_id: currentSettings.projectId, 
+                table_ids: currentSettings.tableIds 
+            }),
+        });
+        
+        const result = await response.json();
+        
+        if (!result.success) {
+            throw new Error(result.error);
+        }
+
+        // Format result
+        let dataContent = `### 💾 생성된 SQL\n\`\`\`sql\n${result.generated_sql}\n\`\`\`\n\n### 📊 결과 (${result.row_count}개 행)\n`;
+        
+        if (result.data && result.data.length > 0) {
+            const headers = Object.keys(result.data[0]);
+            dataContent += `| ${headers.join(' | ')} |\n| ${headers.map(() => '---').join(' | ')} |\n`;
+            
+            result.data.slice(0, 10).forEach(row => {
+                const values = headers.map(h => {
+                    let val = row[h] === null ? '' : row[h];
+                    return typeof val === 'string' ? val.replace(/\|/g, '\\|') : val;
+                });
+                dataContent += `| ${values.join(' | ')} |\n`;
+            });
+            
+            if (result.data.length > 10) {
+                dataContent += `\n*상위 10개 행만 표시됩니다. 전체 ${result.row_count}개 행 중*`;
+            }
+        } else {
+            dataContent += "결과 데이터가 없습니다.";
+        }
+        
+        const analysisContext = {
+            question: result.original_question, 
+            sql_query: result.generated_sql, 
+            query_results: result.data,
+            project_id: currentSettings.projectId, 
+            table_ids: currentSettings.tableIds
+        };
+        
+        loadingMessage.remove();
+        addMessage(dataContent, false, 'data_result', analysisContext);
+        
+    } catch (error) {
+        loadingMessage.remove();
+        addMessage(`**❌ 오류 발생:**\n${error.message}`, false, 'markdown');
+    } finally {
+        elements.chatInput.disabled = false;
+        elements.sendButton.disabled = false;
+        elements.chatInput.focus();
+    }
+}
+
+function autoResizeTextarea() {
+    const textarea = elements.chatInput;
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+}
+
+// Event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    checkContextAndSetUIState();
+    
+    // Context change detection
+    window.addEventListener('contextChanged', checkContextAndSetUIState);
+    
+    // Send button
+    elements.sendButton.addEventListener('click', sendMessage);
+    
+    // Textarea events
+    elements.chatInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage();
+        }
+    });
+    
+    elements.chatInput.addEventListener('input', autoResizeTextarea);
+    
+    // Initial textarea size
+    autoResizeTextarea();
+});
