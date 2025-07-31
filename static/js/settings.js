@@ -1,333 +1,612 @@
+/**
+ * 프로젝트 설정 페이지 스크립트 (리팩토링된 버전)
+ * 설정 관리와 프로파일링 기능에 집중
+ */
 
+import { DOM, Loading, Notification, Events } from './utils.js';
+import { ProgressComponent, LogComponent } from './components.js';
+import { stateManager, contextManager, EVENT_TYPES } from './state.js';
+import { bigqueryAPI, profilingAPI } from './api.js';
 
-let currentSettings = { projectId: null, tableIds: [] };
-let isFirstMessage = true;
+// ===== 전역 변수 =====
+let progressComponent = null;
+let logComponent = null;
+let profilingSessionId = null;
+let profilingStatusInterval = null;
 
+// ===== DOM 요소들 =====
 const elements = {
-    contextStatus: document.getElementById('contextStatus'),
-    contextStatusDot: document.getElementById('context-status-dot'),
-    messagesContainer: document.getElementById('messagesContainer'),
-    chatInput: document.getElementById('chatInput'),
-    sendButton: document.getElementById('sendButton'),
-    quickSuggestions: document.getElementById('quickSuggestions'),
+    // 프로젝트 설정
+    gcpProjectId: DOM.get('gcpProjectId'),
+    refreshProjectsButton: DOM.get('refreshProjectsButton'),
+    tablesContainer: DOM.get('tablesContainer'),
+    tablesPlaceholder: DOM.get('tablesPlaceholder'),
+    tablesList: DOM.get('tablesList'),
+    tableSelectionStatus: DOM.get('tableSelectionStatus'),
+    selectAllTablesButton: DOM.get('selectAllTablesButton'),
+    saveSettingsButton: DOM.get('saveSettingsButton'),
+    saveStatus: DOM.get('saveStatus'),
+    
+    // 프로파일링
+    profilingSection: DOM.get('profilingSection'),
+    startProfilingButton: DOM.get('startProfilingButton'),
+    profilingProgress: DOM.get('profilingProgress'),
+    profilingStatusText: DOM.get('profilingStatusText'),
+    profilingStatusDot: DOM.get('profilingStatusDot'),
+    profilingLog: DOM.get('profilingLog'),
+    profilingResults: DOM.get('profilingResults'),
+    profilingResultsContent: DOM.get('profilingResultsContent'),
+    viewFullReportButton: DOM.get('viewFullReportButton')
 };
 
-function checkContextAndSetUIState() {
-    const savedSettings = localStorage.getItem('bigqueryAISettings');
-    const savedProfile = localStorage.getItem('selectedProfile');
-    let context = null;
+// ===== 페이지 초기화 =====
+function initializePage() {
+    setupEventListeners();
+    loadInitialData();
+    setupComponents();
     
-    if (savedProfile) {
-        const profile = JSON.parse(savedProfile);
-        if (profile.id && profile.projectId && profile.tableIds && profile.tableIds.length > 0) {
-            context = { projectId: profile.projectId, tableIds: profile.tableIds };
-            elements.contextStatus.textContent = `프로파일: ${profile.id.substring(0, 8)}...`;
-        }
-    }
-    
-    if (!context && savedSettings) {
-        const settings = JSON.parse(savedSettings);
-        if (settings.projectId && settings.tableIds && settings.tableIds.length > 0) {
-            context = settings;
-            elements.contextStatus.textContent = `프로젝트: ${settings.projectId}`;
-        }
-    }
-    
-    if (context) {
-        currentSettings = context;
-        elements.chatInput.disabled = false;
-        elements.sendButton.disabled = false;
-        elements.contextStatusDot.classList.add('active');
-        if (isFirstMessage) showWelcomeMessage();
-    } else {
-        currentSettings = { projectId: null, tableIds: [] };
-        elements.chatInput.disabled = true;
-        elements.sendButton.disabled = true;
-        elements.contextStatusDot.classList.remove('active');
-        elements.contextStatus.textContent = '설정 필요';
-        showSettingsNeededMessage();
-    }
+    console.log('설정 페이지 초기화 완료');
 }
 
-function showWelcomeMessage() {
-    elements.messagesContainer.innerHTML = `
-        <div class="welcome-container">
-            <div class="welcome-icon">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
-                </svg>
-            </div>
-            <h2 class="welcome-title">무엇을 도와드릴까요?</h2>
-            <p class="welcome-subtitle">
-                BigQuery 데이터에 대해 자연어로 질문해보세요.<br>
-                테이블 구조, 데이터 분석, 트렌드 등 무엇이든 물어보세요.
-            </p>
-        </div>`;
-    elements.quickSuggestions.classList.remove('hidden');
-}
-
-function showSettingsNeededMessage() {
-    elements.messagesContainer.innerHTML = `
-        <div class="welcome-container">
-            <div class="welcome-icon" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-            </div>
-            <h2 class="welcome-title">설정이 필요합니다</h2>
-            <p class="welcome-subtitle">
-                좌측 메뉴의 <a href="/settings" class="text-orange-600 font-semibold hover:underline">프로젝트 설정</a>으로 이동하여<br>
-                BigQuery 프로젝트를 선택하고 프로파일링을 완료해주세요.
-            </p>
-            <div class="mt-6">
-                <a href="/settings" class="btn btn-primary">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    <span>프로젝트 설정하러 가기</span>
-                </a>
-            </div>
-        </div>`;
-    elements.quickSuggestions.classList.add('hidden');
-}
-
-function insertQuickQuestion(question) {
-    elements.chatInput.value = question;
-    elements.chatInput.focus();
-    autoResizeTextarea();
-}
-
-function addMessage(content, isUser = false, type = 'text', context = null) {
-    if (isFirstMessage && type !== 'loading') {
-        elements.messagesContainer.innerHTML = '';
-        elements.quickSuggestions.classList.add('hidden');
-        isFirstMessage = false;
-    }
-    
-    const messageWrapper = document.createElement('div');
-    messageWrapper.className = 'message-bubble';
-    
-    const messageContainer = document.createElement('div');
-    messageContainer.className = `message-wrapper ${isUser ? 'user' : ''}`;
-    
-    // Avatar
-    const avatar = document.createElement('div');
-    avatar.className = `message-avatar ${isUser ? 'user' : 'assistant'}`;
-    avatar.textContent = isUser ? 'U' : 'AI';
-    
-    // Content
-    const contentContainer = document.createElement('div');
-    contentContainer.className = 'message-content';
-    
-    const messageDiv = document.createElement('div');
-    
-    if (type === 'loading') {
-        messageDiv.className = 'message-text loading';
-        messageDiv.innerHTML = `
-            <span>분석 중</span>
-            <div class="loading-dots">
-                <div class="loading-dot"></div>
-                <div class="loading-dot"></div>
-                <div class="loading-dot"></div>
-            </div>`;
-    } else {
-        messageDiv.className = `message-text ${isUser ? 'user' : 'assistant'}`;
-        
-        if (type === 'markdown') {
-            messageDiv.innerHTML = marked.parse(content, { gfm: true, breaks: true });
-        } else if (type === 'data_result') {
-            messageDiv.innerHTML = formatDataResult(content);
-        } else {
-            messageDiv.textContent = content;
-        }
-    }
-    
-    contentContainer.appendChild(messageDiv);
-
-    // Analysis menu for data results
-    if (!isUser && type === 'data_result' && context) {
-        const menu = createAnalysisMenu(context);
-        contentContainer.appendChild(menu);
-    }
-
-    messageContainer.appendChild(avatar);
-    messageContainer.appendChild(contentContainer);
-    messageWrapper.appendChild(messageContainer);
-    elements.messagesContainer.appendChild(messageWrapper);
-    
-    // Scroll to bottom
-    const messagesArea = document.getElementById('messagesArea');
-    messagesArea.scrollTop = messagesArea.scrollHeight;
-    
-    return messageWrapper;
-}
-
-function formatDataResult(content) {
-    return `<div class="prose max-w-none">${marked.parse(content, { gfm: true, breaks: true })}</div>`;
-}
-
-function createAnalysisMenu(context) {
-    const menuContainer = document.createElement('div');
-    menuContainer.className = 'analysis-menu';
-    
-    const menuTitle = document.createElement('div');
-    menuTitle.className = 'analysis-menu-title';
-    menuTitle.textContent = '🔍 추가 분석';
-    
-    const buttonsContainer = document.createElement('div');
-    buttonsContainer.className = 'analysis-buttons';
-    
-    const menuItems = [
-        { text: '📊 결과 데이터 해설', type: 'explanation' },
-        { text: '🔍 컨텍스트 연계 분석', type: 'context' },
-        { text: '💡 추가 분석 제안', type: 'suggestion' }
+// ===== 컴포넌트 설정 =====
+function setupComponents() {
+    // 프로그레스 컴포넌트
+    const progressSteps = [
+        '메타데이터 추출',
+        '데이터 구조 분석', 
+        '관계 분석',
+        '리포트 생성'
     ];
     
-    menuItems.forEach(item => {
-        const button = document.createElement('button');
-        button.className = 'analysis-button';
-        button.textContent = item.text;
-        button.onclick = () => handleAnalysisRequest(item.type, context, menuContainer);
-        buttonsContainer.appendChild(button);
-    });
+    const progressContainer = document.querySelector('.space-y-3');
+    if (progressContainer) {
+        progressComponent = new ProgressComponent(progressContainer, progressSteps);
+    }
     
-    menuContainer.appendChild(menuTitle);
-    menuContainer.appendChild(buttonsContainer);
-    return menuContainer;
-}
-
-async function handleAnalysisRequest(analysisType, context, menuContainer) {
-    // Disable buttons
-    const buttons = menuContainer.querySelectorAll('.analysis-button');
-    buttons.forEach(btn => btn.disabled = true);
-    
-    const loadingMessage = addMessage('', false, 'loading');
-    
-    try {
-        const response = await fetch('/analyze-context', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...context, analysis_type: analysisType }),
+    // 로그 컴포넌트
+    if (elements.profilingLog) {
+        logComponent = new LogComponent(elements.profilingLog, {
+            maxLines: 500,
+            autoScroll: true,
+            showTimestamp: true,
+            theme: 'dark'
         });
-        
-        const result = await response.json();
-        
-        if (!result.success) {
-            throw new Error(result.error);
-        }
-        
-        addMessage(result.analysis, false, 'markdown');
-    } catch (error) {
-        addMessage(`**분석 오류:**\n${error.message}`, false, 'markdown');
-    } finally {
-        loadingMessage.remove();
-        buttons.forEach(btn => btn.disabled = false);
+        logComponent.addLog('프로파일링 준비 중...');
     }
 }
 
-async function sendMessage() {
-    const question = elements.chatInput.value.trim();
-    if (!question) return;
+// ===== 이벤트 리스너 설정 =====
+function setupEventListeners() {
+    // 프로젝트 새로고침
+    if (elements.refreshProjectsButton) {
+        elements.refreshProjectsButton.addEventListener('click', loadGcpProjects);
+    }
     
-    // Add user message
-    addMessage(question, true, 'text');
+    // 프로젝트 선택 변경
+    if (elements.gcpProjectId) {
+        elements.gcpProjectId.addEventListener('change', onProjectChange);
+    }
     
-    // Reset input
-    elements.chatInput.value = '';
-    autoResizeTextarea();
-    elements.chatInput.disabled = true;
-    elements.sendButton.disabled = true;
+    // 전체 테이블 선택/해제
+    if (elements.selectAllTablesButton) {
+        elements.selectAllTablesButton.addEventListener('click', toggleAllTables);
+    }
     
-    const loadingMessage = addMessage('', false, 'loading');
+    // 설정 저장
+    if (elements.saveSettingsButton) {
+        elements.saveSettingsButton.addEventListener('click', saveSettings);
+    }
+    
+    // 프로파일링 시작
+    if (elements.startProfilingButton) {
+        elements.startProfilingButton.addEventListener('click', startProfiling);
+    }
+    
+    // 전체 리포트 보기
+    if (elements.viewFullReportButton) {
+        elements.viewFullReportButton.addEventListener('click', viewFullReport);
+    }
+    
+    // 상태 변경 감지
+    Events.on(EVENT_TYPES.SETTINGS_UPDATED, onSettingsUpdated);
+}
+
+// ===== 초기 데이터 로드 =====
+function loadInitialData() {
+    loadGcpProjects();
+    loadSavedSettings();
+}
+
+// ===== GCP 프로젝트 로드 =====
+async function loadGcpProjects() {
+    if (!elements.gcpProjectId) return;
+    
+    const button = elements.refreshProjectsButton;
+    Loading.setButtonLoading(button, true);
     
     try {
-        const response = await fetch('/quick', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                question: question, 
-                project_id: currentSettings.projectId, 
-                table_ids: currentSettings.tableIds 
-            }),
-        });
+        const projects = await bigqueryAPI.getProjects();
         
-        const result = await response.json();
+        // 기존 옵션 제거 (첫 번째 옵션 제외)
+        elements.gcpProjectId.innerHTML = '<option value="">프로젝트를 선택하세요...</option>';
         
-        if (!result.success) {
-            throw new Error(result.error);
-        }
-
-        // Format result
-        let dataContent = `### 💾 생성된 SQL\n\`\`\`sql\n${result.generated_sql}\n\`\`\`\n\n### 📊 결과 (${result.row_count}개 행)\n`;
-        
-        if (result.data && result.data.length > 0) {
-            const headers = Object.keys(result.data[0]);
-            dataContent += `| ${headers.join(' | ')} |\n| ${headers.map(() => '---').join(' | ')} |\n`;
-            
-            result.data.slice(0, 10).forEach(row => {
-                const values = headers.map(h => {
-                    let val = row[h] === null ? '' : row[h];
-                    return typeof val === 'string' ? val.replace(/\|/g, '\\|') : val;
-                });
-                dataContent += `| ${values.join(' | ')} |\n`;
+        if (projects && projects.length > 0) {
+            projects.forEach(project => {
+                const option = document.createElement('option');
+                option.value = project.projectId;
+                option.textContent = `${project.projectId} (${project.friendlyName || 'No Name'})`;
+                elements.gcpProjectId.appendChild(option);
             });
-            
-            if (result.data.length > 10) {
-                dataContent += `\n*상위 10개 행만 표시됩니다. 전체 ${result.row_count}개 행 중*`;
-            }
         } else {
-            dataContent += "결과 데이터가 없습니다.";
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = '사용 가능한 프로젝트가 없습니다';
+            option.disabled = true;
+            elements.gcpProjectId.appendChild(option);
         }
         
-        const analysisContext = {
-            question: result.original_question, 
-            sql_query: result.generated_sql, 
-            query_results: result.data,
-            project_id: currentSettings.projectId, 
-            table_ids: currentSettings.tableIds
-        };
-        
-        loadingMessage.remove();
-        addMessage(dataContent, false, 'data_result', analysisContext);
-        
     } catch (error) {
-        loadingMessage.remove();
-        addMessage(`**❌ 오류 발생:**\n${error.message}`, false, 'markdown');
+        console.error('프로젝트 로드 오류:', error);
+        Notification.show('프로젝트 목록을 불러오는데 실패했습니다.', 'error');
     } finally {
-        elements.chatInput.disabled = false;
-        elements.sendButton.disabled = false;
-        elements.chatInput.focus();
+        Loading.setButtonLoading(button, false, '새로고침');
     }
 }
 
-function autoResizeTextarea() {
-    const textarea = elements.chatInput;
-    textarea.style.height = 'auto';
-    textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+// ===== 저장된 설정 로드 =====
+function loadSavedSettings() {
+    const settings = stateManager.getState('settings');
+    
+    if (settings && settings.projectId) {
+        // 프로젝트 선택
+        if (elements.gcpProjectId) {
+            elements.gcpProjectId.value = settings.projectId;
+            loadTablesForProject(settings.projectId);
+        }
+        
+        // 프로파일링 섹션 표시
+        showProfilingSection();
+    }
 }
 
-// Event listeners
-document.addEventListener('DOMContentLoaded', function() {
-    checkContextAndSetUIState();
+// ===== 프로젝트 변경 처리 =====
+async function onProjectChange() {
+    const projectId = elements.gcpProjectId.value;
     
-    // Context change detection
-    window.addEventListener('contextChanged', checkContextAndSetUIState);
+    if (projectId) {
+        await loadTablesForProject(projectId);
+        showProfilingSection();
+    } else {
+        hideTablesSection();
+        hideProfilingSection();
+    }
     
-    // Send button
-    elements.sendButton.addEventListener('click', sendMessage);
+    updateSaveButtonState();
+}
+
+// ===== 테이블 로드 =====
+async function loadTablesForProject(projectId) {
+    if (!elements.tablesList || !elements.tablesPlaceholder) return;
     
-    // Textarea events
-    elements.chatInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            sendMessage();
+    // 로딩 표시
+    DOM.hide(elements.tablesList);
+    DOM.show(elements.tablesPlaceholder);
+    elements.tablesPlaceholder.textContent = '테이블을 불러오는 중...';
+    
+    try {
+        const tables = await bigqueryAPI.getTables(projectId);
+        
+        if (tables && tables.length > 0) {
+            renderTablesSection(tables, projectId);
+            DOM.hide(elements.tablesPlaceholder);
+            DOM.show(elements.tablesList);
+        } else {
+            elements.tablesPlaceholder.textContent = '사용 가능한 테이블이 없습니다';
         }
+        
+    } catch (error) {
+        console.error('테이블 로드 오류:', error);
+        elements.tablesPlaceholder.textContent = '테이블을 불러오는데 실패했습니다';
+        Notification.show('테이블 목록을 불러오는데 실패했습니다.', 'error');
+    }
+    
+    updateTableSelectionStatus();
+    updateSaveButtonState();
+}
+
+// ===== 테이블 섹션 렌더링 =====
+function renderTablesSection(tables, projectId) {
+    if (!elements.tablesList) return;
+    
+    const savedSettings = stateManager.getState('settings');
+    const selectedTableIds = savedSettings?.tableIds || [];
+    
+    elements.tablesList.innerHTML = '';
+    
+    // 데이터셋별로 그룹화
+    const datasetGroups = {};
+    tables.forEach(table => {
+        const dataset = table.datasetId;
+        if (!datasetGroups[dataset]) {
+            datasetGroups[dataset] = [];
+        }
+        datasetGroups[dataset].push(table);
     });
     
-    elements.chatInput.addEventListener('input', autoResizeTextarea);
+    // 데이터셋별로 렌더링
+    Object.keys(datasetGroups).sort().forEach(dataset => {
+        const datasetSection = DOM.create('div', 'border-b border-gray-200 last:border-b-0');
+        
+        // 데이터셋 헤더
+        const header = DOM.create('div', 'p-3 bg-gray-50 font-medium text-gray-700 text-sm');
+        header.textContent = `📁 ${dataset}`;
+        datasetSection.appendChild(header);
+        
+        // 테이블 목록
+        const tablesContainer = DOM.create('div', 'divide-y divide-gray-100');
+        
+        datasetGroups[dataset].forEach(table => {
+            const tableId = `${projectId}.${table.datasetId}.${table.tableId}`;
+            const isSelected = selectedTableIds.includes(tableId);
+            
+            const tableRow = DOM.create('div', 'p-3 flex items-center hover:bg-gray-50');
+            
+            const checkbox = DOM.create('input', 'mr-3 h-4 w-4 text-orange-600 rounded');
+            checkbox.type = 'checkbox';
+            checkbox.id = `table_${table.tableId}`;
+            checkbox.value = tableId;
+            checkbox.checked = isSelected;
+            checkbox.addEventListener('change', onTableSelectionChange);
+            
+            const label = DOM.create('label', 'flex-1 text-sm cursor-pointer');
+            label.setAttribute('for', checkbox.id);
+            
+            const tableName = DOM.create('div', 'font-medium text-gray-900');
+            tableName.textContent = table.tableId;
+            
+            const tableInfo = DOM.create('div', 'text-xs text-gray-500 mt-1');
+            const rowCount = table.numRows ? `${parseInt(table.numRows).toLocaleString()}행` : '알 수 없음';
+            const size = table.numBytes ? `${(table.numBytes / 1024 / 1024).toFixed(1)}MB` : '';
+            tableInfo.textContent = `${rowCount}${size ? ` • ${size}` : ''}`;
+            
+            label.appendChild(tableName);
+            label.appendChild(tableInfo);
+            
+            tableRow.appendChild(checkbox);
+            tableRow.appendChild(label);
+            
+            tablesContainer.appendChild(tableRow);
+        });
+        
+        datasetSection.appendChild(tablesContainer);
+        elements.tablesList.appendChild(datasetSection);
+    });
+}
+
+// ===== 테이블 선택 변경 처리 =====
+function onTableSelectionChange() {
+    updateTableSelectionStatus();
+    updateSaveButtonState();
+}
+
+// ===== 테이블 선택 상태 업데이트 =====
+function updateTableSelectionStatus() {
+    if (!elements.tableSelectionStatus) return;
     
-    // Initial textarea size
-    autoResizeTextarea();
+    const checkboxes = elements.tablesList?.querySelectorAll('input[type="checkbox"]') || [];
+    const selectedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+    
+    elements.tableSelectionStatus.textContent = `선택된 테이블: ${selectedCount}개`;
+    
+    // 전체 선택 버튼 상태 업데이트
+    if (elements.selectAllTablesButton) {
+        const allSelected = checkboxes.length > 0 && selectedCount === checkboxes.length;
+        elements.selectAllTablesButton.textContent = allSelected ? '전체 해제' : '전체 선택';
+        elements.selectAllTablesButton.disabled = checkboxes.length === 0;
+    }
+}
+
+// ===== 전체 테이블 선택/해제 =====
+function toggleAllTables() {
+    const checkboxes = elements.tablesList?.querySelectorAll('input[type="checkbox"]') || [];
+    const allSelected = Array.from(checkboxes).every(cb => cb.checked);
+    
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = !allSelected;
+    });
+    
+    updateTableSelectionStatus();
+    updateSaveButtonState();
+}
+
+// ===== 저장 버튼 상태 업데이트 =====
+function updateSaveButtonState() {
+    if (!elements.saveSettingsButton) return;
+    
+    const projectId = elements.gcpProjectId?.value;
+    const selectedTables = getSelectedTableIds();
+    
+    const canSave = projectId && selectedTables.length > 0;
+    elements.saveSettingsButton.disabled = !canSave;
+}
+
+// ===== 선택된 테이블 ID 가져오기 =====
+function getSelectedTableIds() {
+    const checkboxes = elements.tablesList?.querySelectorAll('input[type="checkbox"]:checked') || [];
+    return Array.from(checkboxes).map(cb => cb.value);
+}
+
+// ===== 설정 저장 =====
+async function saveSettings() {
+    const projectId = elements.gcpProjectId?.value;
+    const tableIds = getSelectedTableIds();
+    
+    if (!projectId || tableIds.length === 0) {
+        Notification.show('프로젝트와 테이블을 선택해주세요.', 'warning');
+        return;
+    }
+    
+    Loading.setButtonLoading(elements.saveSettingsButton, true);
+    
+    try {
+        // 상태 업데이트
+        contextManager.updateSettings({
+            projectId,
+            tableIds
+        });
+        
+        // UI 업데이트
+        if (elements.saveStatus) {
+            elements.saveStatus.innerHTML = '<span class="text-green-600">✓ 설정이 저장되었습니다</span>';
+            setTimeout(() => {
+                elements.saveStatus.innerHTML = '';
+            }, 3000);
+        }
+        
+        // 프로파일링 버튼 활성화
+        if (elements.startProfilingButton) {
+            elements.startProfilingButton.disabled = false;
+        }
+        
+        Notification.show('설정이 저장되었습니다!', 'success');
+        
+    } catch (error) {
+        console.error('설정 저장 오류:', error);
+        Notification.show('설정 저장에 실패했습니다.', 'error');
+    } finally {
+        Loading.setButtonLoading(elements.saveSettingsButton, false, '설정 저장');
+    }
+}
+
+// ===== 프로파일링 시작 =====
+async function startProfiling() {
+    const settings = stateManager.getState('settings');
+    
+    if (!settings?.projectId || !settings?.tableIds?.length) {
+        Notification.show('먼저 설정을 저장해주세요.', 'warning');
+        return;
+    }
+    
+    Loading.setButtonLoading(elements.startProfilingButton, true);
+    
+    try {
+        // 프로파일링 시작
+        const result = await profilingAPI.startProfiling(
+            settings.projectId,
+            settings.tableIds,
+            elements.startProfilingButton
+        );
+        
+        if (result.success) {
+            profilingSessionId = result.session_id;
+            showProfilingProgress();
+            startProfilingStatusCheck();
+            
+            logComponent?.addLog(`프로파일링 시작됨 (세션 ID: ${profilingSessionId})`);
+            Notification.show('프로파일링이 시작되었습니다!', 'success');
+        } else {
+            throw new Error(result.error || '프로파일링 시작에 실패했습니다.');
+        }
+        
+    } catch (error) {
+        console.error('프로파일링 시작 오류:', error);
+        Notification.show(`프로파일링 시작 실패: ${error.message}`, 'error');
+    } finally {
+        Loading.setButtonLoading(elements.startProfilingButton, false, '프로파일링 시작');
+    }
+}
+
+// ===== 프로파일링 상태 확인 =====
+function startProfilingStatusCheck() {
+    if (profilingStatusInterval) {
+        clearInterval(profilingStatusInterval);
+    }
+    
+    profilingStatusInterval = setInterval(async () => {
+        try {
+            const status = await profilingAPI.getProfilingStatus(profilingSessionId);
+            updateProfilingStatus(status);
+            
+            if (status.status === 'completed' || status.status === 'failed') {
+                clearInterval(profilingStatusInterval);
+                profilingStatusInterval = null;
+            }
+            
+        } catch (error) {
+            console.error('상태 확인 오류:', error);
+            logComponent?.addLog(`상태 확인 오류: ${error.message}`, 'error');
+        }
+    }, 2000);
+}
+
+// ===== 프로파일링 상태 업데이트 =====
+function updateProfilingStatus(status) {
+    // 상태 텍스트 업데이트
+    if (elements.profilingStatusText) {
+        elements.profilingStatusText.textContent = getStatusText(status.status);
+    }
+    
+    // 프로그레스 업데이트
+    if (progressComponent && status.current_step !== undefined) {
+        progressComponent.goToStep(status.current_step);
+    }
+    
+    // 로그 추가
+    if (status.logs && status.logs.length > 0) {
+        status.logs.forEach(log => {
+            logComponent?.addLog(log.message, log.log_type);
+        });
+    }
+    
+    // 완료 처리
+    if (status.status === 'completed') {
+        onProfilingCompleted(status);
+    } else if (status.status === 'failed') {
+        onProfilingFailed(status);
+    }
+}
+
+// ===== 상태 텍스트 가져오기 =====
+function getStatusText(status) {
+    const statusMap = {
+        'pending': '대기 중',
+        'running': '실행 중',
+        'completed': '완료됨',
+        'failed': '실패함'
+    };
+    return statusMap[status] || status;
+}
+
+// ===== 프로파일링 완료 처리 =====
+function onProfilingCompleted(status) {
+    logComponent?.addLog('프로파일링이 완료되었습니다!', 'success');
+    progressComponent?.completeAll();
+    
+    if (elements.profilingStatusDot) {
+        DOM.removeClass(elements.profilingStatusDot, 'active');
+        DOM.addClass(elements.profilingStatusDot, 'completed');
+    }
+    
+    // 결과 표시
+    if (status.profiling_report && elements.profilingResultsContent) {
+        showProfilingResults(status.profiling_report);
+    }
+    
+    Notification.show('프로파일링이 완료되었습니다!', 'success');
+}
+
+// ===== 프로파일링 실패 처리 =====
+function onProfilingFailed(status) {
+    const errorMessage = status.error || '알 수 없는 오류가 발생했습니다.';
+    logComponent?.addLog(`프로파일링 실패: ${errorMessage}`, 'error');
+    
+    if (elements.profilingStatusText) {
+        elements.profilingStatusText.textContent = '실패함';
+    }
+    
+    Notification.show(`프로파일링 실패: ${errorMessage}`, 'error');
+}
+
+// ===== 프로파일링 결과 표시 =====
+function showProfilingResults(report) {
+    if (!elements.profilingResults || !elements.profilingResultsContent) return;
+    
+    let resultHtml = '';
+    
+    if (report.sections && Object.keys(report.sections).length > 0) {
+        // 섹션별 표시
+        const sections = report.sections;
+        const sectionOrder = ["overview", "table_analysis", "relationships", "business_questions", "recommendations"];
+        const sectionInfo = {
+            "overview": { title: "📋 데이터셋 개요", color: "border-blue-500" },
+            "table_analysis": { title: "🔍 테이블 상세 분석", color: "border-green-500" },
+            "relationships": { title: "🔗 테이블 간 관계", color: "border-purple-500" },
+            "business_questions": { title: "❓ 분석 가능 질문", color: "border-yellow-500" },
+            "recommendations": { title: "💡 활용 권장사항", color: "border-indigo-500" }
+        };
+
+        let sectionsHtml = '<div class="space-y-4">';
+        for (const key of sectionOrder) {
+            if (sections[key]) {
+                sectionsHtml += `
+                <div class="bg-white rounded-lg border-l-4 ${sectionInfo[key].color} shadow-sm p-4">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-3">
+                        ${sectionInfo[key].title}
+                    </h4>
+                    <div class="prose prose-sm max-w-none text-gray-600">
+                        ${marked?.parse ? marked.parse(sections[key]) : sections[key]}
+                    </div>
+                </div>`;
+            }
+        }
+        sectionsHtml += '</div>';
+        resultHtml = sectionsHtml;
+        
+    } else if (report.full_report) {
+        // 전체 리포트 표시
+        resultHtml = `<div class="prose prose-sm max-w-none">${marked?.parse ? marked.parse(report.full_report) : report.full_report}</div>`;
+    } else {
+        resultHtml = '<div class="text-center text-gray-500 p-6">결과를 표시할 수 없습니다.</div>';
+    }
+    
+    elements.profilingResultsContent.innerHTML = resultHtml;
+    DOM.show(elements.profilingResults);
+}
+
+// ===== 전체 리포트 보기 =====
+function viewFullReport() {
+    // 프로파일 라이브러리 페이지로 이동
+    window.location.href = '/profiling-history';
+}
+
+// ===== UI 표시/숨김 함수들 =====
+function showProfilingSection() {
+    if (elements.profilingSection) {
+        elements.profilingSection.style.display = 'block';
+    }
+}
+
+function hideProfilingSection() {
+    if (elements.profilingSection) {
+        elements.profilingSection.style.display = 'none';
+    }
+}
+
+function showProfilingProgress() {
+    if (elements.profilingProgress) {
+        DOM.show(elements.profilingProgress);
+    }
+}
+
+function hideTablesSection() {
+    if (elements.tablesList) {
+        DOM.hide(elements.tablesList);
+    }
+    if (elements.tablesPlaceholder) {
+        DOM.show(elements.tablesPlaceholder);
+        elements.tablesPlaceholder.textContent = '먼저 프로젝트를 선택하세요';
+    }
+}
+
+// ===== 설정 업데이트 이벤트 처리 =====
+function onSettingsUpdated(event) {
+    const { newValue } = event.detail;
+    console.log('설정 업데이트됨:', newValue);
+    
+    // 필요시 UI 업데이트
+    updateSaveButtonState();
+}
+
+// ===== 페이지 언로드 시 정리 =====
+window.addEventListener('beforeunload', () => {
+    if (profilingStatusInterval) {
+        clearInterval(profilingStatusInterval);
+    }
 });
+
+// ===== 페이지 로드 이벤트 =====
+document.addEventListener('DOMContentLoaded', initializePage);
+
+// ===== 전역 노출 (HTML에서 호출하는 함수들) =====
+window.loadGcpProjects = loadGcpProjects;
+window.toggleAllTables = toggleAllTables;

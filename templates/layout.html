@@ -107,7 +107,106 @@
         </main>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <!-- 공통 모듈 스크립트 (ES6 모듈) -->
+    <script type="module">
+        // 공통 모듈들을 전역으로 노출 (레거시 지원)
+        import './static/js/utils.js';
+        import './static/js/api.js';
+        import './static/js/state.js';
+        import './static/js/components.js';
+        import './static/js/chat-interface.js';
+    </script>
+    
+    <!-- 사이드바 컨텍스트 관리 스크립트 -->
+    <script type="module">
+        import { DOM, Events } from './static/js/utils.js';
+        import { contextManager, EVENT_TYPES } from './static/js/state.js';
+
+        // 사이드바 컨텍스트 업데이트 함수
+        function updateSidebarContext() {
+            const profileDisplay = DOM.get('selected-profile-display');
+            const tablesDisplay = DOM.get('context-tables-display');
+            
+            if (!profileDisplay || !tablesDisplay) {
+                console.warn('사이드바 컨텍스트 요소를 찾을 수 없습니다.');
+                return;
+            }
+            
+            const contextInfo = contextManager.getContextInfo();
+            
+            // 기존 컨텍스트 초기화
+            profileDisplay.innerHTML = '';
+            tablesDisplay.innerHTML = '';
+
+            if (contextInfo.isValid && contextInfo.context) {
+                const context = contextInfo.context;
+                
+                // 컨텍스트 정보 표시
+                profileDisplay.innerHTML = `
+                    <div class="font-semibold text-gray-800 mb-1">컨텍스트:</div>
+                    <div class="flex items-center justify-between">
+                        <span class="truncate text-gray-600 text-sm" title="${contextInfo.message}">${contextInfo.message}</span>
+                        <button id="clearContextBtn" class="text-red-500 hover:text-red-700 text-xs font-bold ml-2 px-2 py-1 rounded hover:bg-red-50" title="컨텍스트 해제">×</button>
+                    </div>
+                `;
+                
+                // 컨텍스트 해제 버튼 이벤트
+                const clearBtn = DOM.get('clearContextBtn');
+                if (clearBtn) {
+                    clearBtn.addEventListener('click', () => {
+                        if (context.type === 'profile') {
+                            contextManager.clearProfile();
+                        } else {
+                            contextManager.clearSettings();
+                        }
+                    });
+                }
+                
+                // 테이블 목록 표시
+                if (context.tableIds && context.tableIds.length > 0) {
+                    context.tableIds.forEach(tableId => {
+                        const li = DOM.create('li', 'context-table-item');
+                        li.textContent = tableId.split('.').pop();
+                        li.title = tableId;
+                        tablesDisplay.appendChild(li);
+                    });
+                } else {
+                    const li = DOM.create('li', 'context-table-item text-gray-400');
+                    li.textContent = '테이블 없음';
+                    tablesDisplay.appendChild(li);
+                }
+                
+                console.log('컨텍스트 업데이트:', context);
+                
+            } else {
+                // 컨텍스트가 없는 경우
+                profileDisplay.innerHTML = '<div class="text-gray-400 text-sm">선택된 컨텍스트 없음</div>';
+                const li = DOM.create('li', 'context-table-item text-gray-400');
+                li.innerHTML = '프로젝트 설정 또는<br>프로파일을 선택하세요.';
+                tablesDisplay.appendChild(li);
+                console.log('컨텍스트 없음 - 사이드바 초기화');
+            }
+        }
+
+        // 페이지 로드 시 사이드바 컨텍스트 초기화
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('사이드바 컨텍스트 시스템 초기화');
+            updateSidebarContext();
+        });
+
+        // 컨텍스트 변경 이벤트 리스너
+        Events.on(EVENT_TYPES.CONTEXT_CHANGED, () => {
+            console.log('컨텍스트 변경 이벤트 수신');
+            updateSidebarContext();
+        });
+
+        // 전역 노출 (레거시 지원)
+        window.updateSidebarContext = updateSidebarContext;
+        window.dispatchContextChange = () => {
+            Events.emit(EVENT_TYPES.CONTEXT_CHANGED);
+        };
+    </script>
+
     {% block scripts %}{% endblock %}
 </body>
 </html>
