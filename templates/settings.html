@@ -208,6 +208,8 @@
             return;
         }
 
+        console.log('설정 저장 중:', { projectId, tableIds: tableIds.length });
+
         localStorage.setItem('bigqueryAISettings', JSON.stringify({ projectId, tableIds }));
         
         showStatus('✅ 설정이 성공적으로 저장되었습니다!', 'success');
@@ -217,11 +219,28 @@
         elements.profilingSection.style.display = 'block';
         elements.startProfilingButton.disabled = false;
         
-        // Trigger context changed event
+        // 강제로 컨텍스트 변경 이벤트 발생
+        console.log('컨텍스트 변경 이벤트 발생 시작');
         window.dispatchEvent(new Event('contextChanged'));
+        
+        // 전역 사이드바 업데이트 함수 호출 (있는 경우)
+        if (typeof window.updateSidebarContext === 'function') {
+            console.log('사이드바 직접 업데이트 호출');
+            setTimeout(() => {
+                window.updateSidebarContext();
+            }, 100);
+        }
+        
+        // dispatchContextChange 함수 호출 (있는 경우)
+        if (typeof window.dispatchContextChange === 'function') {
+            console.log('dispatchContextChange 호출');
+            window.dispatchContextChange();
+        }
         
         // Scroll to profiling section
         elements.profilingSection.scrollIntoView({ behavior: 'smooth' });
+        
+        console.log('설정 저장 완료');
     }
 
     function showStatus(message, type = 'info') {
