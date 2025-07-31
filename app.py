@@ -1,4 +1,3 @@
-# app.py - 메인 애플리케이션 (통합 프로파일링 지원)
 """
 BigQuery AI Assistant - 메인 애플리케이션 (프로파일링 통합 버전)
 """
@@ -8,7 +7,8 @@ import logging
 import datetime
 from typing import Optional
 from dotenv import load_dotenv
-from flask import Flask, jsonify
+from flask import Flask, render_template, redirect, url_for, jsonify
+
 from flask_cors import CORS
 
 import anthropic
@@ -122,7 +122,6 @@ else:
     logger.warning("통합 분석기를 초기화할 수 없습니다.")
 
 # --- Blueprint 안전 등록 ---
-
 def safe_register_blueprint(app, blueprint, name, available_flag):
     """Blueprint를 안전하게 등록"""
     if available_flag and blueprint is not None:
@@ -160,53 +159,75 @@ if safe_register_blueprint(app, gcp_bp, "GCP Routes", GCP_ROUTES_AVAILABLE):
 if safe_register_blueprint(app, session_bp, "Session Routes", SESSION_ROUTES_AVAILABLE):
     registered_blueprints.append("session")
 
-# --- 폴백 라우트 (웹 라우트가 없는 경우) ---
+# --- API 테스트 페이지 라우트 ---
+API_ENDPOINTS = [
+    {
+        'id': 'create_session',
+        'name': '세션 생성',
+        'endpoint': '/api/session',
+        'method': 'POST',
+        'params': []
+    },
+    {
+        'id': 'get_session',
+        'name': '세션 정보 조회',
+        'endpoint': '/api/session/<session_id>',
+        'method': 'GET',
+        'params': [
+            {'name': 'session_id', 'type': 'path', 'label': '세션 ID'}
+        ]
+    },
+    {
+        'id': 'chat',
+        'name': '채팅 메시지 전송',
+        'endpoint': '/api/chat',
+        'method': 'POST',
+        'params': [
+            {'name': 'session_id', 'type': 'body', 'label': '세션 ID'},
+            {'name': 'user_input', 'type': 'body', 'label': '사용자 메시지', 'inputType': 'textarea'}
+        ]
+    },
+    {
+        'id': 'get_gcp_projects',
+        'name': 'GCP 프로젝트 목록 조회',
+        'endpoint': '/api/gcp/projects',
+        'method': 'GET',
+        'params': []
+    },
+    {
+        'id': 'get_bq_datasets',
+        'name': 'BigQuery 데이터셋 목록 조회',
+        'endpoint': '/api/gcp/bigquery/datasets',
+        'method': 'GET',
+        'params': [
+            {'name': 'project_id', 'type': 'query', 'label': 'GCP 프로젝트 ID'}
+        ]
+    },
+    {
+        'id': 'get_bq_tables',
+        'name': 'BigQuery 테이블 목록 조회',
+        'endpoint': '/api/gcp/bigquery/tables',
+        'method': 'GET',
+        'params': [
+            {'name': 'project_id', 'type': 'query', 'label': 'GCP 프로젝트 ID'},
+            {'name': 'dataset_id', 'type': 'query', 'label': '데이터셋 ID'}
+        ]
+    },
+]
 
-if not WEB_ROUTES_AVAILABLE:
-    logger.info("웹 라우트가 없어 폴백 라우트를 등록합니다.")
-    
-    @app.route('/')
-    def index():
-        """메인 페이지 폴백"""
-        try:
-            from flask import render_template
-            return render_template('index.html')
-        except Exception as e:
-            return f"""
-            <html><body>
-                <h1>BigQuery AI Assistant</h1>
-                <p>서버가 부분적으로 실행 중입니다.</p>
-                <p>Error: {str(e)}</p>
-                <p>등록된 Blueprint: {', '.join(registered_blueprints) if registered_blueprints else 'None'}</p>
-            </body></html>
-            """
+@app.route('/')
+def home():
+    """
+    메인 페이지 접속 시 API 테스트 페이지로 리다이렉트합니다.
+    """
+    return redirect(url_for('api_test'))
 
-    @app.route('/settings')
-    def settings_page():
-        """설정 페이지 폴백"""
-        try:
-            from flask import render_template
-            return render_template('settings.html')
-        except Exception as e:
-            return f"<html><body><h1>Settings</h1><p>Error: {str(e)}</p></body></html>"
-
-    @app.route('/history')
-    def logs_page():
-        """history 페이지 폴백"""
-        try:
-            from flask import render_template
-            return render_template('history.html')
-        except Exception as e:
-            return f"<html><body><h1>History</h1><p>Error: {str(e)}</p></body></html>"
-
-    @app.route('/profiling-history')
-    def profiling_history_page():
-        """프로파일링 기록 페이지 폴백"""
-        try:
-            from flask import render_template
-            return render_template('profiling.html')
-        except Exception as e:
-            return f"<html><body><h1>Profile Library</h1><p>Error: {str(e)}</p></body></html>"
+@app.route('/test')
+def api_test():
+    """
+    API 테스트 페이지를 렌더링하고 API 목록을 전달합니다.
+    """
+    return render_template('api_test.html', api_list=API_ENDPOINTS)
 
 # --- 유틸리티 라우트 ---
 
