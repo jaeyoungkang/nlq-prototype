@@ -35,65 +35,71 @@ def init_routes(analyzer, bq_client):
     bigquery_client = bq_client
 
 
-@analysis_bp.route('/quick', methods=['POST'])
-def quick_query():
-    """빠른 조회 - 데이터만 반환"""
-    try:
-        if not integrated_analyzer:
-            return jsonify({
-                "success": False, 
-                "error": "분석 엔진이 초기화되지 않았습니다."
-            }), 500
+@analysis_bp.route('/query/execute', methods=['POST'])
+def execute_query():
+    data = request.json
+    mode = data.get('mode', 'quick') # 기본값은 'quick'
+
+    if mode == 'structured':
+        
+        pass
+    else: # mode == 'quick'
+        try:
+            if not integrated_analyzer:
+                return jsonify({
+                    "success": False, 
+                    "error": "분석 엔진이 초기화되지 않았습니다."
+                }), 500
+                
+            data = request.json
+            if not data or 'question' not in data:
+                return jsonify({
+                    "success": False, 
+                    "error": "요청 본문에 'question' 필드가 필요합니다."
+                }), 400
             
-        data = request.json
-        if not data or 'question' not in data:
-            return jsonify({
-                "success": False, 
-                "error": "요청 본문에 'question' 필드가 필요합니다."
-            }), 400
-        
-        question = data['question'].strip()
-        project_id = data.get('project_id', '').strip()
-        table_ids = data.get('table_ids', [])
-        
-        if not question or not project_id or not table_ids:
-            return jsonify({
-                "success": False, 
-                "error": "질문, 프로젝트 ID, 테이블 ID가 모두 필요합니다."
-            }), 400
+            question = data['question'].strip()
+            project_id = data.get('project_id', '').strip()
+            table_ids = data.get('table_ids', [])
+            
+            if not question or not project_id or not table_ids:
+                return jsonify({
+                    "success": False, 
+                    "error": "질문, 프로젝트 ID, 테이블 ID가 모두 필요합니다."
+                }), 400
 
-        # SQL 생성
-        sql_query = integrated_analyzer.natural_language_to_sql(question, project_id, table_ids)
-        
-        # BigQuery 실행
-        query_result = integrated_analyzer.execute_bigquery(sql_query)
-        
-        if not query_result["success"]:
+            # SQL 생성
+            sql_query = integrated_analyzer.natural_language_to_sql(question, project_id, table_ids)
+            
+            # BigQuery 실행
+            query_result = integrated_analyzer.execute_bigquery(sql_query)
+            
+            if not query_result["success"]:
+                return jsonify({
+                    "success": False, 
+                    "error": query_result["error"], 
+                    "generated_sql": sql_query,
+                    "error_type": query_result.get("error_type", "unknown")
+                }), 500
+            
             return jsonify({
-                "success": False, 
-                "error": query_result["error"], 
+                "success": True, 
+                "original_question": question, 
                 "generated_sql": sql_query,
-                "error_type": query_result.get("error_type", "unknown")
+                "data": query_result["data"], 
+                "row_count": query_result.get("row_count", 0),
+                "execution_stats": query_result.get("job_stats", {})
+            })
+            
+        except Exception as e:
+            logger.error(f"빠른 조회 중 오류: {str(e)}")
+            return jsonify({
+                "success": False, 
+                "error": f"서버 오류: {str(e)}"
             }), 500
-        
-        return jsonify({
-            "success": True, 
-            "original_question": question, 
-            "generated_sql": sql_query,
-            "data": query_result["data"], 
-            "row_count": query_result.get("row_count", 0),
-            "execution_stats": query_result.get("job_stats", {})
-        })
-        
-    except Exception as e:
-        logger.error(f"빠른 조회 중 오류: {str(e)}")
-        return jsonify({
-            "success": False, 
-            "error": f"서버 오류: {str(e)}"
-        }), 500
+        pass
 
-
-@analysis_bp.route('/analyze-context', methods=['POST'])
+@analysis_bp.route('/query/context-analysis', methods=['POST'])
 def analyze_context():
     """요청된 특정 컨텍스트 분석을 수행"""
     try:
@@ -145,7 +151,7 @@ def analyze_context():
         }), 500
 
 
-@analysis_bp.route('/profiling')
+@analysis_bp.route('/profiling/run')
 def run_profiling():
     """통합 프로파일링 엔드포인트 (설정 페이지용 실시간 스트리밍)"""
     if not integrated_analyzer:
@@ -221,13 +227,13 @@ def run_profiling():
             
             # 메타데이터를 기반으로 프로파일링 수행
             metadata_summary = f"""
-다음은 추출된 BigQuery 테이블 메타데이터입니다:
+                                다음은 추출된 BigQuery 테이블 메타데이터입니다:
 
-프로젝트 ID: {project_id}
-분석 대상 테이블: {len(validated_table_ids)}개
+                                프로젝트 ID: {project_id}
+                                분석 대상 테이블: {len(validated_table_ids)}개
 
-{json.dumps(metadata, indent=2, ensure_ascii=False, default=str)}
-"""
+                                {json.dumps(metadata, indent=2, ensure_ascii=False, default=str)}
+                                """
             
             # 섹션별 프로파일링 수행
             sections = [

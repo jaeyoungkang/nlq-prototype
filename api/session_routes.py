@@ -12,7 +12,7 @@ from firestore_db import db_manager
 logger = logging.getLogger(__name__)
 
 # Blueprint 생성 - URL prefix 추가
-session_bp = Blueprint('session', __name__, url_prefix='/api')
+session_bp = Blueprint('session', __name__)
 
 
 @session_bp.route('/all-logs')

@@ -13,7 +13,7 @@ from google.cloud import bigquery
 logger = logging.getLogger(__name__)
 
 # Blueprint 생성
-gcp_bp = Blueprint('gcp', __name__, url_prefix='/api')
+gcp_bp = Blueprint('gcp', __name__)
 
 # 전역 변수 (app.py에서 설정됨)
 bigquery_client = None

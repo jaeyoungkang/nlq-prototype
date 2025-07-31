@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 # Flask 웹 애플리케이션 초기화
 app = Flask(__name__)
 CORS(app, 
-     origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+     origins=["http://localhost:5173", "http://127.0.0.1:5173"],
      allow_headers=["Content-Type", "Cache-Control"],
      expose_headers=["Cache-Control"],
      supports_credentials=False)
@@ -127,7 +127,7 @@ def safe_register_blueprint(app, blueprint, name, available_flag):
     """Blueprint를 안전하게 등록"""
     if available_flag and blueprint is not None:
         try:
-            app.register_blueprint(blueprint)
+            app.register_blueprint(blueprint, url_prefix='/api')
             logger.info(f"✅ {name} Blueprint 등록 완료")
             return True
         except Exception as e:
