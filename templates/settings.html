@@ -143,9 +143,6 @@
                             <button id="viewFullReportButton" class="btn btn-secondary text-xs">
                                 전체 리포트 보기
                             </button>
-                            <button id="useProfileButton" class="btn btn-primary text-xs">
-                                이 프로파일 사용
-                            </button>
                         </div>
                     </div>
                     <div id="profilingResultsContent" class="prose prose-sm max-w-none">
@@ -156,39 +153,7 @@
         </div>
     </section>
 
-    <!-- 3. 프로파일 관리 섹션 -->
-    <section class="card">
-        <div class="card-header">
-            <h2 class="card-title">3. 기존 프로파일 관리</h2>
-            <p class="card-subtitle">이전에 생성된 프로파일을 선택하거나 관리합니다</p>
-        </div>
 
-        <div class="space-y-4">
-            <!-- Profile Selection -->
-            <div id="profilesList" class="space-y-2">
-                <!-- Profiles will be populated here -->
-            </div>
-
-            <!-- No Profiles Message -->
-            <div id="noProfilesMessage" class="p-6 text-center text-gray-500 hidden">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <p>아직 생성된 프로파일이 없습니다</p>
-                <p class="text-xs mt-1">위에서 프로파일링을 실행하여 첫 번째 프로파일을 생성하세요</p>
-            </div>
-
-            <!-- Refresh Profiles -->
-            <div class="flex justify-center pt-4 border-t border-gray-200">
-                <button id="refreshProfilesButton" class="btn btn-secondary">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    <span>프로파일 목록 새로고침</span>
-                </button>
-            </div>
-        </div>
-    </section>
 </div>
 {% endblock %}
 
@@ -220,12 +185,17 @@
         profilingResults: document.getElementById('profilingResults'),
         profilingResultsContent: document.getElementById('profilingResultsContent'),
         viewFullReportButton: document.getElementById('viewFullReportButton'),
-        useProfileButton: document.getElementById('useProfileButton'),
         
-        // Profile Management
-        profilesList: document.getElementById('profilesList'),
-        noProfilesMessage: document.getElementById('noProfilesMessage'),
-        refreshProfilesButton: document.getElementById('refreshProfilesButton'),
+        // Context Management
+        showCurrentContextButton: document.getElementById('showCurrentContextButton'),
+        currentContextDisplay: document.getElementById('currentContextDisplay'),
+        contextDetails: document.getElementById('contextDetails'),
+        clearContextButton: document.getElementById('clearContextButton'),
+        
+        // Quick Stats
+        totalProfilesCount: document.getElementById('totalProfilesCount'),
+        completedProfilesCount: document.getElementById('completedProfilesCount'),
+        recentProfilesCount: document.getElementById('recentProfilesCount'),
     };
 
     // ====== Project Settings Functions ======
@@ -570,6 +540,12 @@
                     생성된 섹션: ${Object.keys(report.sections).length}개 | 
                     생성 시간: ${new Date(report.generated_at).toLocaleString()}
                 </div>
+                <div class="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <p class="text-sm text-green-800 font-medium">✅ 프로파일링이 완료되었습니다!</p>
+                    <p class="text-xs text-green-700 mt-1">
+                        프로파일 라이브러리에서 전체 리포트를 확인하거나 프로파일을 선택하여 분석을 시작할 수 있습니다.
+                    </p>
+                </div>
             `;
             summaryHtml += '</div>';
             
@@ -582,10 +558,15 @@
             profilingEventSource = null;
         }
         
-        addProfilingLog('프로파일링 완료! 결과를 확인하세요.');
+        addProfilingLog('프로파일링 완료! 프로파일 라이브러리에서 확인하세요.');
         
-        // Refresh profiles list
-        loadExistingProfiles();
+        // Auto-redirect to profile library after 3 seconds
+        setTimeout(() => {
+            showStatus('🎉 프로파일 라이브러리로 이동합니다...', 'success');
+            setTimeout(() => {
+                window.location.href = '/profiling-history';
+            }, 1500);
+        }, 3000);
     }
 
     function handleProfilingError(message) {
@@ -603,29 +584,6 @@
         showStatus(`프로파일링 실패: ${message}`, 'error');
     }
 
-    function useCurrentProfile() {
-        if (!currentProfileSession) return;
-        
-        const projectId = elements.gcpProjectId.value;
-        const tableIds = Array.from(selectedTables);
-        
-        const profile = {
-            id: currentProfileSession,
-            projectId: projectId,
-            tableIds: tableIds
-        };
-        
-        localStorage.setItem('selectedProfile', JSON.stringify(profile));
-        window.dispatchEvent(new Event('contextChanged'));
-        
-        showStatus('✅ 프로파일이 선택되었습니다. 이제 채팅에서 분석을 시작할 수 있습니다!', 'success');
-        
-        // Auto redirect to chat after 2 seconds
-        setTimeout(() => {
-            window.location.href = '/';
-        }, 2000);
-    }
-
     function viewFullReport() {
         if (!currentProfileSession) return;
         
@@ -633,138 +591,7 @@
         window.open(`/profiling-history#${currentProfileSession}`, '_blank');
     }
 
-    // ====== Profile Management Functions ======
-    async function loadExistingProfiles() {
-        try {
-            const response = await fetch('/logs?limit=50');
-            const profiles = await response.json();
-            
-            if (profiles.error) {
-                throw new Error(profiles.error);
-            }
-            
-            displayProfiles(profiles);
-        } catch (error) {
-            console.error('프로파일 로드 오류:', error);
-            elements.noProfilesMessage.classList.remove('hidden');
-        }
-    }
-
-    function displayProfiles(profiles) {
-        elements.profilesList.innerHTML = '';
-        
-        if (!profiles || profiles.length === 0) {
-            elements.noProfilesMessage.classList.remove('hidden');
-            return;
-        }
-        
-        elements.noProfilesMessage.classList.add('hidden');
-        
-        const selectedProfileJSON = localStorage.getItem('selectedProfile');
-        const selectedProfileId = selectedProfileJSON ? JSON.parse(selectedProfileJSON).id : null;
-        
-        const settingsJSON = localStorage.getItem('bigqueryAISettings');
-        const settings = settingsJSON ? JSON.parse(settingsJSON) : null;
-        const settingsTableIds = settings ? new Set(settings.tableIds.sort()) : null;
-
-        const areSetsEqual = (a, b) => {
-            if (!a || !b) return false;
-            if (a.size !== b.size) return false;
-            const sortedA = [...a].sort();
-            const sortedB = [...b].sort();
-            for (let i = 0; i < sortedA.length; i++) {
-                if (sortedA[i] !== sortedB[i]) return false;
-            }
-            return true;
-        };
-
-        profiles.forEach(profile => {
-            const isCurrentlySelected = profile.id === selectedProfileId;
-            let isSelectable = true;
-            let disabledReason = '';
-
-            if (settingsTableIds) {
-                const profileTableIds = new Set((profile.table_ids || []).sort());
-                if (!areSetsEqual(settingsTableIds, profileTableIds)) {
-                    isSelectable = false;
-                    disabledReason = '현재 프로젝트 설정과 테이블 구성이 다릅니다.';
-                }
-            }
-
-            const statusMapping = {
-                '완료': { class: 'badge-success', label: '완료' },
-                '실패': { class: 'badge-error', label: '실패' },
-                '진행 중': { class: 'badge-warning', label: '진행 중' }
-            };
-            const statusInfo = statusMapping[profile.status] || { class: 'badge-gray', label: profile.status };
-
-            const startTime = new Date(profile.start_time);
-            const endTime = profile.end_time ? new Date(profile.end_time) : null;
-            let duration = '진행 중';
-            if(endTime) {
-                const diffSeconds = ((endTime - startTime) / 1000);
-                duration = diffSeconds < 60 ? `${diffSeconds.toFixed(1)}초` : `${(diffSeconds / 60).toFixed(1)}분`;
-            }
-
-            const profileCard = document.createElement('div');
-            profileCard.className = `border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors ${
-                isCurrentlySelected ? 'bg-blue-50 border-blue-300' : ''
-            }`;
-            
-            profileCard.innerHTML = `
-                <div class="flex items-center justify-between">
-                    <div class="flex-1">
-                        <div class="flex items-center gap-3 mb-2">
-                            <h4 class="font-medium text-gray-900">${profile.project_id}</h4>
-                            <span class="badge ${statusInfo.class}">${statusInfo.label}</span>
-                            ${isCurrentlySelected ? '<span class="badge badge-info">선택됨</span>' : ''}
-                        </div>
-                        <div class="text-sm text-gray-600 space-y-1">
-                            <div>테이블: ${(profile.table_ids || []).length}개</div>
-                            <div>생성: ${startTime.toLocaleString('ko-KR')} (${duration})</div>
-                            ${!isSelectable ? `<div class="text-orange-600 text-xs">${disabledReason}</div>` : ''}
-                        </div>
-                    </div>
-                    <div class="flex gap-2">
-                        <button class="btn btn-secondary text-xs" 
-                                onclick="viewProfileDetail('${profile.id}')"
-                                title="상세 보기">
-                            👁️
-                        </button>
-                        <button class="btn ${isCurrentlySelected ? 'btn-primary opacity-50 cursor-not-allowed' : 'btn-primary'} text-xs" 
-                                onclick="selectProfile('${profile.id}', '${profile.project_id}', '${JSON.stringify(profile.table_ids || []).replace(/"/g, '&quot;')}')"
-                                ${!isSelectable || isCurrentlySelected ? 'disabled' : ''}
-                                title="${isCurrentlySelected ? '이미 선택됨' : isSelectable ? '이 프로파일 선택' : disabledReason}">
-                            ${isCurrentlySelected ? '선택됨' : '선택'}
-                        </button>
-                    </div>
-                </div>
-            `;
-            
-            elements.profilesList.appendChild(profileCard);
-        });
-    }
-
-    function selectProfile(sessionId, projectId, tableIdsJson) {
-        const tableIds = JSON.parse(tableIdsJson.replace(/&quot;/g, '"'));
-        const profile = {
-            id: sessionId,
-            projectId: projectId,
-            tableIds: tableIds
-        };
-        
-        localStorage.setItem('selectedProfile', JSON.stringify(profile));
-        window.dispatchEvent(new Event('contextChanged'));
-        
-        showStatus('✅ 프로파일이 선택되었습니다!', 'success');
-        
-        // Refresh the display to show updated selection
-        loadExistingProfiles();
-    }
-
-    function viewProfileDetail(sessionId) {
-        window.open(`/profiling-history#${sessionId}`, '_blank');
-    }
+    // ====== Context Management Functions ======
 
     // ====== Event Listeners ======
     document.addEventListener('DOMContentLoaded', function() {
@@ -778,22 +605,16 @@
         
         // Profiling events
         elements.startProfilingButton.addEventListener('click', startProfiling);
-        elements.useProfileButton.addEventListener('click', useCurrentProfile);
         elements.viewFullReportButton.addEventListener('click', viewFullReport);
-        
-        // Profile management events
-        elements.refreshProfilesButton.addEventListener('click', loadExistingProfiles);
         
         // Initialize page
         loadGcpProjects();
-        loadExistingProfiles();
         validateInputs();
     });
 
     // Initialize page if auth is already complete
     function initializePage() {
         loadGcpProjects();
-        loadExistingProfiles();
         validateInputs();
     }
 

@@ -31,9 +31,24 @@
         </div>
     </div>
 
-    <!-- Profiles Grid -->
-    <main id="profilesGrid" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-        <!-- Profiles will be populated here -->
+    <!-- Profiles List -->
+    <main class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+        <!-- List Header -->
+        <div class="bg-gray-50 px-6 py-3 border-b border-gray-200">
+            <div class="grid grid-cols-12 gap-4 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                <div class="col-span-3">프로젝트</div>
+                <div class="col-span-2">상태</div>
+                <div class="col-span-2">테이블 수</div>
+                <div class="col-span-2">생성일</div>
+                <div class="col-span-2">소요시간</div>
+                <div class="col-span-1 text-center">액션</div>
+            </div>
+        </div>
+        
+        <!-- List Body -->
+        <div id="profilesList">
+            <!-- Profiles will be populated here -->
+        </div>
     </main>
 
     <!-- Loading State -->
@@ -103,7 +118,7 @@
     let selectedModalProfile = null;
 
     const elements = {
-        profilesGrid: document.getElementById('profilesGrid'),
+        profilesList: document.getElementById('profilesList'),
         loadingState: document.getElementById('loadingState'),
         errorState: document.getElementById('errorState'),
         emptyState: document.getElementById('emptyState'),
@@ -128,7 +143,7 @@
         showLoading();
 
         try {
-            const response = await fetch('/logs?limit=100');
+            const response = await fetch('/api/logs?limit=100');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -154,22 +169,25 @@
         elements.loadingState.classList.remove('hidden');
         elements.errorState.classList.add('hidden');
         elements.emptyState.classList.add('hidden');
-        elements.profilesGrid.innerHTML = '';
+        document.querySelector('main').classList.add('hidden');
     }
 
     function hideLoading() {
         elements.loadingState.classList.add('hidden');
+        document.querySelector('main').classList.remove('hidden');
     }
 
     function showError(message) {
         elements.errorState.classList.remove('hidden');
         elements.errorMessage.textContent = message;
         elements.emptyState.classList.add('hidden');
+        document.querySelector('main').classList.add('hidden');
     }
 
     function showEmpty() {
         elements.emptyState.classList.remove('hidden');
         elements.errorState.classList.add('hidden');
+        document.querySelector('main').classList.add('hidden');
     }
 
     function displayProfiles(profiles) {
@@ -180,6 +198,7 @@
 
         elements.errorState.classList.add('hidden');
         elements.emptyState.classList.add('hidden');
+        document.querySelector('main').classList.remove('hidden');
 
         const selectedProfileJSON = localStorage.getItem('selectedProfile');
         const selectedProfileId = selectedProfileJSON ? JSON.parse(selectedProfileJSON).id : null;
@@ -199,9 +218,9 @@
             return true;
         };
 
-        elements.profilesGrid.innerHTML = '';
+        elements.profilesList.innerHTML = '';
 
-        profiles.forEach(profile => {
+        profiles.forEach((profile, index) => {
             const isCurrentlySelected = profile.id === selectedProfileId;
             let isSelectable = true;
             let disabledReason = '';
@@ -215,11 +234,11 @@
             }
 
             const statusMapping = {
-                '완료': { class: 'completed', label: '완료' },
-                '실패': { class: 'failed', label: '실패' },
-                '진행 중': { class: 'running', label: '진행 중' }
+                '완료': { class: 'success', label: '완료', icon: '✅' },
+                '실패': { class: 'error', label: '실패', icon: '❌' },
+                '진행 중': { class: 'warning', label: '진행 중', icon: '⏳' }
             };
-            const statusInfo = statusMapping[profile.status] || { class: 'unknown', label: profile.status };
+            const statusInfo = statusMapping[profile.status] || { class: 'unknown', label: profile.status, icon: '❓' };
 
             const startTime = new Date(profile.start_time);
             const endTime = profile.end_time ? new Date(profile.end_time) : null;
@@ -229,66 +248,79 @@
                 duration = diffSeconds < 60 ? `${diffSeconds.toFixed(1)}초` : `${(diffSeconds / 60).toFixed(1)}분`;
             }
 
-            const profileCard = document.createElement('div');
-            profileCard.className = `profile-card ${isCurrentlySelected ? 'selected' : ''} ${!isSelectable ? 'disabled' : ''}`;
-            profileCard.dataset.profileId = profile.id;
-            profileCard.dataset.filter = profile.status === '완료' ? 'completed' : 'other';
-            profileCard.dataset.date = profile.start_time;
+            const profileRow = document.createElement('div');
+            profileRow.className = `profile-row ${isCurrentlySelected ? 'selected' : ''} ${!isSelectable ? 'disabled' : ''}`;
+            profileRow.dataset.profileId = profile.id;
+            profileRow.dataset.filter = profile.status === '완료' ? 'completed' : 'other';
+            profileRow.dataset.date = profile.start_time;
             
-            profileCard.innerHTML = `
-                <div class="flex items-start justify-between mb-4">
-                    <div class="flex-1">
-                        <h3 class="font-semibold text-gray-900 text-lg mb-2 truncate" title="${profile.project_id}">${profile.project_id}</h3>
-                        <div class="flex items-center gap-2 mb-3">
-                            <span class="profile-status ${statusInfo.class}">${statusInfo.label}</span>
-                            ${isCurrentlySelected ? '<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">현재 선택됨</span>' : ''}
-                        </div>
-                        <div class="text-sm text-gray-600 space-y-2">
-                            <div class="flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            profileRow.innerHTML = `
+                <div class="grid grid-cols-12 gap-4 items-center px-6 py-4 hover:bg-gray-50 transition-colors ${isCurrentlySelected ? 'bg-blue-50' : ''} ${!isSelectable ? 'opacity-60' : ''}">
+                    <!-- 프로젝트 -->
+                    <div class="col-span-3">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2v0a2 2 0 002-2h10" />
                                 </svg>
-                                <span>테이블 ${(profile.table_ids || []).length}개</span>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                <span>${startTime.toLocaleDateString('ko-KR')} (${duration})</span>
+                            <div class="min-w-0">
+                                <div class="font-medium text-gray-900 truncate" title="${profile.project_id}">${profile.project_id}</div>
+                                <div class="text-xs text-gray-500">ID: ${profile.id.substring(0, 8)}...</div>
                             </div>
-                            ${!isSelectable ? `<div class="text-orange-600 text-xs mt-2 flex items-start gap-1 p-2 bg-orange-50 rounded">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                                </svg>
-                                <span>${disabledReason}</span>
-                            </div>` : ''}
                         </div>
                     </div>
-                </div>
-                
-                <div class="flex gap-2 pt-4 border-t border-gray-200">
-                    <button class="btn btn-secondary text-xs flex-1" 
-                            onclick="viewProfileDetail('${profile.id}', '${profile.project_id}')"
-                            title="상세 리포트 보기">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        </svg>
-                        상세보기
-                    </button>
-                    <button class="btn ${isCurrentlySelected ? 'btn-primary opacity-50 cursor-not-allowed' : 'btn-primary'} text-xs flex-1" 
-                            onclick="selectProfile('${profile.id}', '${profile.project_id}', '${JSON.stringify(profile.table_ids || []).replace(/"/g, '&quot;')}')"
-                            ${!isSelectable || isCurrentlySelected ? 'disabled' : ''}
-                            title="${isCurrentlySelected ? '이미 선택됨' : isSelectable ? '이 프로파일 선택' : disabledReason}">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                        </svg>
-                        ${isCurrentlySelected ? '선택됨' : '선택'}
-                    </button>
+                    
+                    <!-- 상태 -->
+                    <div class="col-span-2">
+                        <div class="flex items-center gap-2">
+                            <span class="profile-status ${statusInfo.class}">${statusInfo.icon} ${statusInfo.label}</span>
+                            ${isCurrentlySelected ? '<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">현재 선택됨</span>' : ''}
+                        </div>
+                        ${!isSelectable ? `<div class="text-orange-600 text-xs mt-1">${disabledReason}</div>` : ''}
+                    </div>
+                    
+                    <!-- 테이블 수 -->
+                    <div class="col-span-2">
+                        <div class="text-sm font-medium text-gray-900">${(profile.table_ids || []).length}개</div>
+                        <div class="text-xs text-gray-500">테이블</div>
+                    </div>
+                    
+                    <!-- 생성일 -->
+                    <div class="col-span-2">
+                        <div class="text-sm text-gray-900">${startTime.toLocaleDateString('ko-KR')}</div>
+                        <div class="text-xs text-gray-500">${startTime.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</div>
+                    </div>
+                    
+                    <!-- 소요시간 -->
+                    <div class="col-span-2">
+                        <div class="text-sm text-gray-900">${duration}</div>
+                        <div class="text-xs text-gray-500">실행 시간</div>
+                    </div>
+                    
+                    <!-- 액션 -->
+                    <div class="col-span-1 flex justify-center gap-1">
+                        <button class="action-btn view" 
+                                onclick="viewProfileDetail('${profile.id}', '${profile.project_id}')"
+                                title="상세 보기">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                        </button>
+                        <button class="action-btn ${isCurrentlySelected ? 'selected' : 'select'}" 
+                                onclick="selectProfile('${profile.id}', '${profile.project_id}', '${JSON.stringify(profile.table_ids || []).replace(/"/g, '&quot;')}')"
+                                ${!isSelectable || isCurrentlySelected ? 'disabled' : ''}
+                                title="${isCurrentlySelected ? '이미 선택됨' : isSelectable ? '이 프로파일 선택' : disabledReason}">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                        </button>
+                    </div>
                 </div>
             `;
             
-            elements.profilesGrid.appendChild(profileCard);
+            elements.profilesList.appendChild(profileRow);
         });
     }
 
@@ -300,21 +332,21 @@
         document.getElementById(`filter${filterType.charAt(0).toUpperCase() + filterType.slice(1)}`).classList.add('active');
         
         // Apply filter
-        const profileCards = elements.profilesGrid.children;
+        const profileRows = elements.profilesList.children;
         let visibleCount = 0;
         
-        for (let card of profileCards) {
+        for (let row of profileRows) {
             let shouldShow = true;
             
             switch (filterType) {
                 case 'completed':
-                    shouldShow = card.dataset.filter === 'completed';
+                    shouldShow = row.dataset.filter === 'completed';
                     break;
                 case 'recent':
-                    const cardDate = new Date(card.dataset.date);
+                    const rowDate = new Date(row.dataset.date);
                     const weekAgo = new Date();
                     weekAgo.setDate(weekAgo.getDate() - 7);
-                    shouldShow = cardDate >= weekAgo;
+                    shouldShow = rowDate >= weekAgo;
                     break;
                 case 'all':
                 default:
@@ -323,10 +355,10 @@
             }
             
             if (shouldShow) {
-                card.style.display = 'block';
+                row.style.display = 'block';
                 visibleCount++;
             } else {
-                card.style.display = 'none';
+                row.style.display = 'none';
             }
         }
         
@@ -335,8 +367,10 @@
             elements.emptyState.classList.remove('hidden');
             elements.emptyState.querySelector('h3').textContent = '필터 조건에 맞는 프로파일이 없습니다';
             elements.emptyState.querySelector('p').textContent = '다른 필터를 선택하거나 새 프로파일을 만들어보세요.';
+            document.querySelector('main').classList.add('hidden');
         } else {
             elements.emptyState.classList.add('hidden');
+            document.querySelector('main').classList.remove('hidden');
         }
     }
 
@@ -366,7 +400,7 @@
         elements.profileModal.classList.remove('hidden');
         
         try {
-            const response = await fetch(`/logs/${sessionId}`);
+            const response = await fetch(`/api/logs/${sessionId}`);
             if (!response.ok) throw new Error('상세 내용을 불러오지 못했습니다.');
             const data = await response.json();
             
@@ -533,31 +567,30 @@
     color: #c2410c;
 }
 
-/* Profile cards */
-.profile-card {
-    background-color: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 1rem;
-    padding: 1.5rem;
-    transition: all 0.2s ease-in-out;
-    animation: fadeInUp 0.3s ease-out;
+/* Profile list */
+.profile-row {
+    border-bottom: 1px solid #f3f4f6;
+    transition: all 0.15s ease-in-out;
 }
 
-.profile-card:hover:not(.disabled) {
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-    border-color: #d1d5db;
-    transform: translateY(-2px);
+.profile-row:hover:not(.disabled) {
+    background-color: #f9fafb !important;
+    transform: translateX(2px);
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.05);
 }
 
-.profile-card.selected {
+.profile-row.selected {
     background-color: #eff6ff;
-    border-color: #93c5fd;
-    box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.1);
+    border-left: 4px solid #3b82f6;
 }
 
-.profile-card.disabled {
+.profile-row.disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+.profile-row:last-child {
+    border-bottom: none;
 }
 
 /* Profile status badges */
@@ -569,38 +602,78 @@
     font-size: 0.75rem;
     font-weight: 500;
     border-radius: 9999px;
+    white-space: nowrap;
 }
 
-.profile-status::before {
-    content: '';
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 50%;
-    background-color: currentColor;
-}
-
-.profile-status.completed {
+.profile-status.success {
     background-color: #dcfce7;
     color: #166534;
+    border: 1px solid #bbf7d0;
 }
 
-.profile-status.failed {
+.profile-status.error {
     background-color: #fef2f2;
     color: #dc2626;
+    border: 1px solid #fecaca;
 }
 
-.profile-status.running {
+.profile-status.warning {
     background-color: #fef3c7;
     color: #d97706;
-}
-
-.profile-status.running::before {
-    animation: pulse 2s infinite;
+    border: 1px solid #fed7aa;
 }
 
 .profile-status.unknown {
     background-color: #f3f4f6;
     color: #6b7280;
+    border: 1px solid #d1d5db;
+}
+
+/* Action buttons */
+.action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 0.5rem;
+    border: 1px solid #d1d5db;
+    background-color: #ffffff;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+}
+
+.action-btn:hover:not(:disabled) {
+    background-color: #f9fafb;
+    border-color: #9ca3af;
+    color: #374151;
+    transform: scale(1.05);
+}
+
+.action-btn.view:hover {
+    background-color: #dbeafe;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.action-btn.select:hover {
+    background-color: #dcfce7;
+    border-color: #bbf7d0;
+    color: #166534;
+}
+
+.action-btn.selected {
+    background-color: #dbeafe;
+    border-color: #3b82f6;
+    color: #1d4ed8;
+    cursor: default;
+}
+
+.action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
 }
 
 /* Loading spinner */
@@ -661,62 +734,48 @@
     height: 1rem;
 }
 
-/* Animations */
-@keyframes fadeInUp {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-@keyframes pulse {
-    0%, 100% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.5;
-    }
-}
-
-/* Modal backdrop */
-.fixed.inset-0 {
-    backdrop-filter: blur(4px);
-}
-
 /* Responsive design */
 @media (max-width: 1024px) {
-    #profilesGrid {
-        grid-template-columns: repeat(1, minmax(0, 1fr));
+    .profile-row .grid {
+        grid-template-columns: 1fr auto;
+        gap: 1rem;
+    }
+    
+    .profile-row .col-span-3,
+    .profile-row .col-span-2,
+    .profile-row .col-span-1 {
+        col-span: 1;
+    }
+    
+    .profile-row .grid > div:nth-child(n+2):nth-child(-n+5) {
+        display: none;
+    }
+    
+    /* Mobile: Show only project name and actions */
+    .profile-row .grid > div:first-child {
+        grid-column: 1;
+    }
+    
+    .profile-row .grid > div:last-child {
+        grid-column: 2;
+        justify-self: end;
     }
 }
 
 @media (max-width: 768px) {
-    .profile-card {
-        margin-left: 0.5rem;
-        margin-right: 0.5rem;
-    }
-    
-    .profile-card .flex.gap-2 {
-        flex-direction: column;
+    .profile-row .grid {
+        grid-template-columns: 1fr;
         gap: 0.75rem;
     }
     
-    .profile-card .flex-1 {
-        width: 100%;
+    .profile-row .grid > div:last-child {
+        grid-column: 1;
+        justify-self: start;
     }
     
-    .filter-btn {
-        padding: 0.375rem 0.75rem;
-        font-size: 0.8125rem;
+    .action-btn {
+        width: 40px;
+        height: 40px;
     }
     
     header .flex {
@@ -724,84 +783,78 @@
         align-items: flex-start;
         gap: 1rem;
     }
+    
+    .filter-btn {
+        padding: 0.375rem 0.75rem;
+        font-size: 0.8125rem;
+    }
+}
+
+/* Animations */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 /* Focus styles for accessibility */
 .btn:focus,
-.filter-btn:focus {
+.filter-btn:focus,
+.action-btn:focus {
     outline: none;
     box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.1);
 }
 
-.profile-card:focus-within {
-    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.1);
-}
-
-/* Print styles */
-@media print {
-    .fixed,
-    .btn,
-    .filter-btn {
-        display: none !important;
-    }
-    
-    .profile-card {
-        break-inside: avoid;
-        border: 1px solid #000;
-        margin-bottom: 1rem;
-        box-shadow: none;
-    }
-    
-    .profile-status {
-        border: 1px solid currentColor;
-    }
-}
-
-/* Scrollbar styling */
-.overflow-y-auto::-webkit-scrollbar {
-    width: 6px;
-}
-
-.overflow-y-auto::-webkit-scrollbar-track {
-    background: #f1f5f9;
-}
-
-.overflow-y-auto::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
-    border-radius: 3px;
-}
-
-.overflow-y-auto::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
+.profile-row:focus-within {
+    background-color: #f9fafb;
 }
 
 /* High contrast mode support */
 @media (prefers-contrast: high) {
-    .profile-card {
-        border-width: 2px;
-    }
-    
-    .btn {
+    .profile-row,
+    .btn,
+    .action-btn {
         border-width: 2px;
     }
     
     .profile-status {
-        border: 1px solid;
+        border-width: 2px;
     }
 }
 
 /* Reduced motion support */
 @media (prefers-reduced-motion: reduce) {
-    .profile-card,
+    .profile-row,
     .btn,
     .filter-btn,
+    .action-btn,
     .loading-spinner {
         animation: none;
         transition: none;
     }
     
-    .profile-card:hover {
+    .profile-row:hover {
         transform: none;
+    }
+    
+    .action-btn:hover {
+        transform: none;
+    }
+}
+
+/* Dark mode support (if needed) */
+@media (prefers-color-scheme: dark) {
+    .profile-row {
+        border-bottom-color: #374151;
+    }
+    
+    .profile-row:hover:not(.disabled) {
+        background-color: #374151;
+    }
+    
+    .action-btn {
+        background-color: #374151;
+        border-color: #4b5563;
+        color: #d1d5db;
     }
 }
 </style>

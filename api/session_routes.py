@@ -1,20 +1,21 @@
-# api/session_routes.py
+# api/session_routes.py (기존 sessin_routes.py 파일명 수정)
 """
 세션 및 로그 관리 라우트 (프로파일 라이브러리용 개선)
 """
 
 import logging
-from flask import Blueprint, request, jsonify
+from datetime import datetime
+from flask import Blueprint, request, jsonify, Response
 
 from firestore_db import db_manager
 
 logger = logging.getLogger(__name__)
 
-# Blueprint 생성
-session_bp = Blueprint('session', __name__)
+# Blueprint 생성 - URL prefix 추가
+session_bp = Blueprint('session', __name__, url_prefix='/api')
 
 
-@session_bp.route('/api/all-logs')
+@session_bp.route('/all-logs')
 def get_all_logs():
     """저장된 모든 로그 기록을 반환"""
     try:
@@ -356,7 +357,6 @@ def is_this_week(date_string):
         return False
     
     try:
-        from datetime import datetime, timedelta
         date = datetime.fromisoformat(date_string.replace('Z', '+00:00'))
         now = datetime.now(date.tzinfo)
         week_ago = now - timedelta(days=7)
@@ -375,7 +375,6 @@ def calculate_avg_duration(sessions):
         
         if start_time and end_time:
             try:
-                from datetime import datetime
                 start = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
                 end = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
                 duration = (end - start).total_seconds()
